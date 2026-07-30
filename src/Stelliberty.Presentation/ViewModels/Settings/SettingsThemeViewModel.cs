@@ -11,7 +11,7 @@ public sealed class SettingsThemeViewModel : ViewModelBase, IDisposable
     private readonly AppSettings _settings;
     private readonly IAppSettingsStore _settingsStore;
     private readonly ILocalizationService _localization;
-    private static readonly IReadOnlyList<WindowEffect> DefaultWindowEffects = [WindowEffect.None, WindowEffect.Mica, WindowEffect.Acrylic];
+    private static readonly IReadOnlyList<WindowEffect> DefaultWindowEffects = [WindowEffect.None];
     private readonly IReadOnlyList<WindowEffect> _windowEffects;
     private AppTheme _selectedTheme;
     private AccentColorMode _accentColorMode;

@@ -799,6 +799,24 @@ public sealed class SettingsPageBusinessTests
         Assert.Equal(1, store.SaveCount);
     }
 
+    [Fact(DisplayName = "Theme window effect is unavailable when only none is supported")]
+    public void ThemeWindowEffectIsUnavailableWhenOnlyNoneIsSupported()
+    {
+        var settings = new AppSettings { WindowEffect = "Acrylic" };
+        var store = new FakeSettingsStore(settings);
+        var viewModel = new SettingsThemeViewModel(
+            settings,
+            store,
+            new FakeLocalizationService(),
+            new FakeWindowEffectCapability(WindowEffect.None));
+
+        Assert.False(viewModel.IsWindowEffectSupported);
+        Assert.Equal([WindowEffect.None], viewModel.WindowEffectOptions.Select(option => option.Value));
+        Assert.Equal(WindowEffect.None, viewModel.SelectedWindowEffect);
+        Assert.Equal("None", settings.WindowEffect);
+        Assert.Equal(1, store.SaveCount);
+    }
+
     [Fact(DisplayName = "Theme window effect exposes only supported macOS options")]
     public void ThemeWindowEffectExposesOnlySupportedMacOSOptions()
     {

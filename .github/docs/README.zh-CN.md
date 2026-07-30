@@ -9,7 +9,7 @@
 <br>
 
 [![Avalonia](https://img.shields.io/badge/Avalonia-UI-9b4fdb?logo=avaloniaui&logoColor=white&style=flat-square)](https://avaloniaui.net)
-[![.NET 11](https://img.shields.io/badge/.NET-11-512BD4?logo=dotnet&logoColor=white&style=flat-square)](https://dotnet.microsoft.com)
+[![.NET 10](https://img.shields.io/badge/.NET-10-512BD4?logo=dotnet&logoColor=white&style=flat-square)](https://dotnet.microsoft.com)
 [![Windows](https://img.shields.io/badge/Windows-0078D6?logo=windows&logoColor=white&style=flat-square)](#)
 [![Linux](https://img.shields.io/badge/Linux-FCC624?logo=linux&logoColor=black&style=flat-square)](#)
 [![macOS](https://img.shields.io/badge/macOS-000000?logo=apple&logoColor=white&style=flat-square)](#)
@@ -28,7 +28,7 @@
 
 Stelliberty 是跨平台桌面代理客户端，覆盖 Windows、Linux 与 macOS。
 
-支持 Clash 标准订阅和 Base64 订阅导入，启动快、占用低。Windows 和 macOS 上还做了平台级的模糊窗口效果，界面偏简约原生风格。
+支持 Clash 标准订阅和 Base64 订阅导入，启动快、占用低。macOS 上还做了平台级的模糊窗口效果，界面偏简约原生风格。
 
 项目内置大量模拟与事前测试流，按真实操作顺序自动验收，后期维护更轻松。
 
@@ -62,21 +62,17 @@ Stelliberty 是跨平台桌面代理客户端，覆盖 Windows、Linux 与 macOS
 
 ### 下载
 
-从 **[Releases 页面](https://github.com/Kindness-Kismet/stelliberty/releases/latest)** 下载对应平台的安装包：
+从 **[Releases 页面](https://github.com/Kindness-Kismet/stelliberty/releases/latest)** 下载 Windows x64 安装包（GitHub Actions 仅发布此目标）：
 
 | 平台 | 推荐 | 其他可选 |
 |---|---|---|
-| Windows · x64 / arm64 | `*-setup.exe`（安装版） | `*.zip`（便携版） |
-| Linux · x64 / arm64 | `*.AppImage` | `*.zip` · `*.deb` · `*.rpm` · `*.pkg.tar.zst` |
-| macOS · x64 / arm64 | `*.dmg` | `*.pkg` |
+| Windows · x64 | `*-setup.exe`（安装版） | `*.zip`（便携版） |
 
 ### 系统要求
 
 | 平台 | 最低要求 |
 |---|---|
-| Windows | 10（1809+）或 11 · x64 / arm64 |
-| Linux | 基于 glibc 的桌面环境，包含 fontconfig + X11 |
-| macOS | 22+ · Intel / Apple Silicon |
+| Windows | 10 LTSB/LTSC 或更新版本 · x64 |
 
 <br>
 
@@ -100,11 +96,11 @@ Stelliberty 是跨平台桌面代理客户端，覆盖 Windows、Linux 与 macOS
 
 <sub>[↑ 回到导航](#导航)</sub>
 
-### 安装 .NET 11 运行时
+### 安装 .NET 10 运行时
 
-运行 Stelliberty 前，请先安装 .NET 11 运行时：
+运行 Stelliberty 前，请先安装 .NET 10 运行时：
 
-- 通用：[微软官方下载](https://dotnet.microsoft.com/download/dotnet/11.0)
+- 通用：[微软官方下载](https://dotnet.microsoft.com/download/dotnet/10.0)
 - Arch Linux 及其衍生发行版：AUR 包 [`dotnet-core-preview-bin`](https://aur.archlinux.org/packages/dotnet-core-preview-bin)
 
 ### UWP 回环与管理员权限
@@ -135,7 +131,7 @@ Windows 上的 UWP 应用（如微软商店应用）默认禁止访问本地代�
 
 | 工具 | 版本 | 获取方式 |
 |---|---|---|
-| .NET SDK | `11.0.x` | https://dotnet.microsoft.com/download/dotnet/11.0 |
+| .NET SDK | `10.0.x` | https://dotnet.microsoft.com/download/dotnet/10.0 |
 | Rust | stable（rustup） | https://rustup.rs |
 | Python | `3.x` | https://www.python.org/downloads/ |
 

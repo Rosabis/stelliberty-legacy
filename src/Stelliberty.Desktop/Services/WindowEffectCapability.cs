@@ -9,9 +9,9 @@ internal sealed class WindowEffectCapability : IWindowEffectCapability
 
     private static IReadOnlyList<WindowEffect> ResolveSupportedEffects()
     {
-        if (OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000))
+        if (OperatingSystem.IsWindows())
         {
-            return [WindowEffect.None, WindowEffect.Mica, WindowEffect.Acrylic];
+            return [WindowEffect.None];
         }
 
         if (OperatingSystem.IsMacOS())

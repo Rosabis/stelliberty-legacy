@@ -176,35 +176,9 @@ jobs:
       matrix:
         include:
           - label: Windows x64
-            runner: windows-2025-vs2026
+            runner: windows-2025
             platform: win-x64
             rust_target: x86_64-pc-windows-msvc
-            os_family: windows
-          - label: Windows arm64
-            runner: windows-11-vs2026-arm
-            platform: win-arm64
-            rust_target: aarch64-pc-windows-msvc
-            os_family: windows
-          - label: Linux x64
-            runner: ubuntu-22.04
-            platform: linux-x64
-            rust_target: x86_64-unknown-linux-gnu
-            os_family: linux
-          - label: Linux arm64
-            runner: ubuntu-22.04-arm
-            platform: linux-arm64
-            rust_target: aarch64-unknown-linux-gnu
-            os_family: linux
-          - label: macOS arm64
-            runner: macos-26
-            platform: macos-arm64
-            rust_target: aarch64-apple-darwin
-            os_family: macos
-          - label: macOS x64
-            runner: macos-26-intel
-            platform: macos-x64
-            rust_target: x86_64-apple-darwin
-            os_family: macos
 
     steps:
       - name: Check out repository
@@ -213,7 +187,7 @@ jobs:
       - name: Set up .NET
         uses: actions/setup-dotnet@v5
         with:
-          dotnet-version: 11.0.x
+          dotnet-version: 10.0.x
 
       - name: Set up Python
         uses: actions/setup-python@v6
@@ -246,37 +220,7 @@ jobs:
             cargo-release-${{ runner.os }}-${{ runner.arch }}-${{ matrix.platform }}-
             cargo-release-${{ runner.os }}-${{ runner.arch }}-
 
-      - name: Install Linux packaging dependencies
-        if: matrix.os_family == 'linux'
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            build-essential \
-            desktop-file-utils \
-            libfontconfig1 \
-            libice6 \
-            libsm6 \
-            libx11-6 \
-            rpm \
-            unzip \
-            zip \
-            zstd
-
-          case "${{ matrix.platform }}" in
-            linux-x64) appimage_arch="x86_64" ;;
-            linux-arm64) appimage_arch="aarch64" ;;
-            *) echo "Unsupported AppImage architecture: ${{ matrix.platform }}" >&2; exit 1 ;;
-          esac
-          mkdir -p "${HOME}/.local/bin"
-          curl -L -o "${HOME}/.local/bin/appimagetool" "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-${appimage_arch}.AppImage"
-          chmod +x "${HOME}/.local/bin/appimagetool"
-          echo "${HOME}/.local/bin" >> "$GITHUB_PATH"
-
       - name: Install Windows packaging dependencies
-        if: matrix.os_family == 'windows'
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
@@ -305,35 +249,12 @@ jobs:
           }
 
       - name: Build Windows beta package
-        if: matrix.os_family == 'windows'
         shell: pwsh
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           python scripts/prebuild.py --platform ${{ matrix.platform }}
           python scripts/build.py --platform ${{ matrix.platform }} --version ${{ needs.prepare.outputs.version }} --pack all
-
-      - name: Build Linux beta package
-        if: matrix.os_family == 'linux'
-        shell: bash
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-
-          python scripts/prebuild.py --platform ${{ matrix.platform }}
-          python scripts/build.py --platform ${{ matrix.platform }} --version ${{ needs.prepare.outputs.version }} --pack all
-
-      - name: Build macOS beta package
-        if: matrix.os_family == 'macos'
-        shell: bash
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-
-          python scripts/prebuild.py --platform ${{ matrix.platform }}
-          python scripts/build.py --platform ${{ matrix.platform }} --version ${{ needs.prepare.outputs.version }} --pack installer
 
       - name: Upload beta artifacts
         uses: actions/upload-artifact@v7
@@ -376,12 +297,6 @@ jobs:
           files: |
             artifacts/**/*.zip
             artifacts/**/*.exe
-            artifacts/**/*.deb
-            artifacts/**/*.rpm
-            artifacts/**/*.pkg.tar.zst
-            artifacts/**/*.AppImage
-            artifacts/**/*.dmg
-            artifacts/**/*.pkg
           draft: false
           prerelease: true
           overwrite_files: true

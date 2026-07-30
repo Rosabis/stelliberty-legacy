@@ -9,7 +9,7 @@
 <br>
 
 [![Avalonia](https://img.shields.io/badge/Avalonia-UI-9b4fdb?logo=avaloniaui&logoColor=white&style=flat-square)](https://avaloniaui.net)
-[![.NET 11](https://img.shields.io/badge/.NET-11-512BD4?logo=dotnet&logoColor=white&style=flat-square)](https://dotnet.microsoft.com)
+[![.NET 10](https://img.shields.io/badge/.NET-10-512BD4?logo=dotnet&logoColor=white&style=flat-square)](https://dotnet.microsoft.com)
 [![Windows](https://img.shields.io/badge/Windows-0078D6?logo=windows&logoColor=white&style=flat-square)](#)
 [![Linux](https://img.shields.io/badge/Linux-FCC624?logo=linux&logoColor=black&style=flat-square)](#)
 [![macOS](https://img.shields.io/badge/macOS-000000?logo=apple&logoColor=white&style=flat-square)](#)
@@ -28,7 +28,7 @@
 
 Stelliberty is a cross-platform desktop proxy client for Windows, Linux, and macOS.
 
-Import Clash-standard and Base64 subscriptions. It starts quickly and uses little resources. On Windows and macOS, platform-level frosted window effects are available, with a simple native look.
+Import Clash-standard and Base64 subscriptions. It starts quickly and uses little resources. On macOS, platform-level frosted window effects are available, with a simple native look.
 
 It also ships with a large set of simulation and prewritten test flows that walk through real user actions, so ongoing maintenance stays easier.
 
@@ -62,21 +62,17 @@ It also ships with a large set of simulation and prewritten test flows that walk
 
 ### Download
 
-Grab the package for your platform from the **[Releases page](https://github.com/Kindness-Kismet/stelliberty/releases/latest)**:
+Grab the Windows x64 package from the **[Releases page](https://github.com/Kindness-Kismet/stelliberty/releases/latest)** (GitHub Actions publishes only this target):
 
 | Platform | Recommended | Alternative |
 |---|---|---|
-| Windows · x64 / arm64 | `*-setup.exe` (installer) | `*.zip` (portable) |
-| Linux · x64 / arm64 | `*.AppImage` | `*.zip` · `*.deb` · `*.rpm` · `*.pkg.tar.zst` |
-| macOS · x64 / arm64 | `*.dmg` | `*.pkg` |
+| Windows · x64 | `*-setup.exe` (installer) | `*.zip` (portable) |
 
 ### System Requirements
 
 | Platform | Minimum |
 |---|---|
-| Windows | 10 (1809+) or 11 · x64 / arm64 |
-| Linux | glibc desktop with fontconfig + X11 |
-| macOS | 22+ · Intel / Apple Silicon |
+| Windows | 10 LTSB/LTSC or later · x64 |
 
 <br>
 
@@ -100,11 +96,11 @@ Config format is fully compatible with Clash Meta — see the [mihomo documentat
 
 <sub>[↑ Back to Navigation](#navigation)</sub>
 
-### Installing .NET 11 Runtime
+### Installing .NET 10 Runtime
 
-Install the .NET 11 Runtime before running Stelliberty:
+Install the .NET 10 Runtime before running Stelliberty:
 
-- General: [Microsoft download](https://dotnet.microsoft.com/download/dotnet/11.0)
+- General: [Microsoft download](https://dotnet.microsoft.com/download/dotnet/10.0)
 - Arch Linux and derivatives: AUR package [`dotnet-core-preview-bin`](https://aur.archlinux.org/packages/dotnet-core-preview-bin)
 
 ### UWP Loopback & Administrator Privileges
@@ -135,7 +131,7 @@ Notes:
 
 | Tool | Version | Get it |
 |---|---|---|
-| .NET SDK | `11.0.x` | https://dotnet.microsoft.com/download/dotnet/11.0 |
+| .NET SDK | `10.0.x` | https://dotnet.microsoft.com/download/dotnet/10.0 |
 | Rust | stable (rustup) | https://rustup.rs |
 | Python | `3.x` | https://www.python.org/downloads/ |
 
