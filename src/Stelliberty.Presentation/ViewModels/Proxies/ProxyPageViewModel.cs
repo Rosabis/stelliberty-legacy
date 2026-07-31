@@ -1027,6 +1027,7 @@ public sealed class ProxyPageViewModel : ViewModelBase, IDisposable
         {
             var orderedNames = _sorter.FilterAndSort(_selectedGroup.All, _entryNodes, _sortMode, _searchKeyword)
                 .Where(name => _entryNodes.ContainsKey(name))
+                .Distinct(StringComparer.Ordinal)
                 .ToList();
 
             if (NodeRowsMatch(orderedNames))

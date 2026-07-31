@@ -754,6 +754,23 @@ public sealed class ProxyPageViewModelTests
         Assert.All(page.VisibleGroupCards, card => Assert.False(card.IsExpanded));
     }
 
+    [Fact(DisplayName = "Selecting group with duplicate entries renders distinct node rows")]
+    public void SelectingGroupWithDuplicateEntriesRendersDistinctNodeRows()
+    {
+        var page = new ProxyPageViewModel();
+        page.LoadConfig(TestConfig(
+        [
+            new ProxyGroup("Duplicated", ProxyGroupTypes.Select, "JP", ["JP", "KR", "JP", "KR", "US"])
+        ]));
+
+        page.SelectGroup("Duplicated");
+
+        Assert.Equal(["JP", "KR", "US"], page.VisibleNodeRows.Select(row => row.Name));
+        Assert.Equal(0, page.IndexOfNode("JP"));
+        Assert.Equal(1, page.IndexOfNode("KR"));
+        Assert.Equal(2, page.IndexOfNode("US"));
+    }
+
     private static ProxyConfig SampleConfig()
     {
         var nodes = new Dictionary<string, ProxyNode>(StringComparer.Ordinal)
