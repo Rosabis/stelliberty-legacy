@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Stelliberty.Application.Localization;
 using Stelliberty.Application.Connections;
 using Stelliberty.Application.Overrides;
@@ -13,6 +14,7 @@ using Stelliberty.Domain.Connections;
 using Stelliberty.Domain.Proxies;
 using Stelliberty.Domain.Overrides;
 using Stelliberty.Domain.Subscriptions;
+using Stelliberty.Desktop.Controls;
 using Stelliberty.Presentation.ViewModels;
 using Xunit;
 
@@ -21,6 +23,19 @@ namespace Stelliberty.Shell.Tests;
 public sealed class MainWindowShellTests
 {
     private static readonly TimeSpan AsyncTestTimeout = TimeSpan.FromSeconds(5);
+
+    [Fact(DisplayName = "Title bar FPS counter throttles rapid composition callbacks")]
+    public void TitleBarFpsCounterThrottlesRapidCompositionCallbacks()
+    {
+        var last = Stopwatch.GetTimestamp();
+        var now = last + Stopwatch.Frequency / 1000;
+
+        var delay = FpsCounter.GetNextSampleDelay(now, last);
+
+        Assert.True(delay > TimeSpan.Zero);
+        Assert.True(delay <= FpsCounter.MinimumSampleInterval);
+        Assert.Equal(TimeSpan.Zero, FpsCounter.GetNextSampleDelay(last, 0));
+    }
 
     [Fact(DisplayName = "Home subscription statistics ignore another subscription runtime")]
     public void HomeSubscriptionStatisticsIgnoreAnotherSubscriptionRuntime()

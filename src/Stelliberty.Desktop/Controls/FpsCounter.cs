@@ -10,12 +10,16 @@ namespace Stelliberty.Desktop.Controls;
 
 public sealed class FpsCounter : Control
 {
+    internal static readonly TimeSpan MinimumSampleInterval = TimeSpan.FromMilliseconds(16);
+
     public static readonly StyledProperty<IBrush?> ForegroundProperty =
         AvaloniaProperty.Register<FpsCounter, IBrush?>(nameof(Foreground));
 
     private readonly Stopwatch _stopwatch = new();
     private int _frames;
     private bool _running;
+    private bool _frameRequestPending;
+    private long _lastCompositionTimestamp;
     private string _text = "-- FPS";
 
     public IBrush? Foreground
@@ -35,6 +39,8 @@ public sealed class FpsCounter : Control
         base.OnAttachedToVisualTree(e);
         _running = true;
         _frames = 0;
+        _frameRequestPending = false;
+        _lastCompositionTimestamp = 0;
         _stopwatch.Restart();
         RequestNextFrame();
     }
@@ -42,6 +48,7 @@ public sealed class FpsCounter : Control
     protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
     {
         _running = false;
+        _frameRequestPending = false;
         base.OnDetachedFromVisualTree(e);
     }
 
@@ -58,11 +65,35 @@ public sealed class FpsCounter : Control
         context.DrawText(text, new Point(0, top > 0 ? top : 0));
     }
 
-    // 每次合成器回调都重新注册，以对齐 vsync。
+    protected override void OnPropertyChanged(AvaloniaPropertyChangedEventArgs change)
+    {
+        base.OnPropertyChanged(change);
+        if (change.Property == IsVisibleProperty)
+        {
+            if (change.NewValue is true && _running)
+            {
+                RequestNextFrame();
+            }
+            else if (change.NewValue is false)
+            {
+                _frameRequestPending = false;
+            }
+        }
+    }
+
+    // Some legacy Windows composition backends can complete updates without vsync throttling.
+    // Keep the title bar counter sampled at about 60 Hz so it cannot become a UI-thread busy loop.
     private void RequestNextFrame()
     {
-        if (!_running)
+        if (!_running || !IsVisible || _frameRequestPending)
         {
+            return;
+        }
+
+        var delay = GetNextSampleDelay(Stopwatch.GetTimestamp(), _lastCompositionTimestamp);
+        if (delay > TimeSpan.Zero)
+        {
+            DispatcherTimer.RunOnce(RequestNextFrame, delay, DispatcherPriority.Background);
             return;
         }
 
@@ -74,16 +105,19 @@ public sealed class FpsCounter : Control
             return;
         }
 
+        _frameRequestPending = true;
         compositor.RequestCompositionUpdate(OnComposed);
     }
 
     private void OnComposed()
     {
+        _frameRequestPending = false;
         if (!_running)
         {
             return;
         }
 
+        _lastCompositionTimestamp = Stopwatch.GetTimestamp();
         _frames++;
         var elapsed = _stopwatch.ElapsedMilliseconds;
         if (elapsed >= 1000)
@@ -100,6 +134,17 @@ public sealed class FpsCounter : Control
         }
 
         RequestNextFrame();
+    }
+
+    internal static TimeSpan GetNextSampleDelay(long nowTimestamp, long lastCompositionTimestamp)
+    {
+        if (lastCompositionTimestamp <= 0 || nowTimestamp <= lastCompositionTimestamp)
+        {
+            return TimeSpan.Zero;
+        }
+
+        var elapsed = Stopwatch.GetElapsedTime(lastCompositionTimestamp, nowTimestamp);
+        return elapsed >= MinimumSampleInterval ? TimeSpan.Zero : MinimumSampleInterval - elapsed;
     }
 
     private FormattedText BuildText() => new(
