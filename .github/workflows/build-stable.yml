@@ -1,20 +1,19 @@
-name: Stable Build
+name: Package Build
 
 on:
   workflow_dispatch:
     inputs:
       version:
-        description: Stable release version, such as x.x.x
-        required: true
+        description: Optional version override, such as x.x.x. Leave empty to use Directory.Build.props.
+        required: false
         type: string
   push:
     branches:
       - stable
-    paths:
-      - Directory.Build.props
+      - win7
 
 concurrency:
-  group: stable-build
+  group: package-build-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -29,52 +28,33 @@ env:
 
 jobs:
   validate-branch:
-    name: Validate stable branch
+    name: Validate build branch
     runs-on: ubuntu-22.04
     steps:
-      - name: Require stable branch
-        shell: bash
-        run: test "${{ github.ref }}" = 'refs/heads/stable'
-
-  detect-version-change:
-    name: Detect version change
-    needs: validate-branch
-    runs-on: ubuntu-22.04
-    outputs:
-      should_build: ${{ steps.detect.outputs.should_build }}
-
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-
-      - name: Detect AppVersion change
-        id: detect
+      - name: Require stable or win7 branch
         shell: bash
         run: |
           set -euo pipefail
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo 'should_build=true' >> "$GITHUB_OUTPUT"
-            echo 'Manual trigger: build enabled.'
-          elif git diff --unified=0 "${{ github.event.before }}" "${{ github.sha }}" -- Directory.Build.props | grep -Eq '^[+-].*<AppVersion>'; then
-            echo 'should_build=true' >> "$GITHUB_OUTPUT"
-            echo 'AppVersion changed: build enabled.'
-          else
-            echo 'should_build=false' >> "$GITHUB_OUTPUT"
-            echo 'AppVersion did not change: build skipped.'
-          fi
+          case "${{ github.ref }}" in
+            refs/heads/stable|refs/heads/win7)
+              echo "Build branch: ${{ github.ref_name }}"
+              ;;
+            *)
+              echo "::error::Package build only runs on stable or win7."
+              exit 1
+              ;;
+          esac
 
   prepare:
     name: Prepare build metadata
-    needs: detect-version-change
-    if: needs.detect-version-change.outputs.should_build == 'true'
+    needs: validate-branch
     runs-on: ubuntu-22.04
     outputs:
       app_name: ${{ steps.meta.outputs.app_name }}
       app_display_name: ${{ steps.meta.outputs.app_display_name }}
       version: ${{ steps.meta.outputs.version }}
       tag: ${{ steps.meta.outputs.tag }}
+      channel: ${{ steps.meta.outputs.channel }}
 
     steps:
       - name: Check out repository
@@ -91,14 +71,13 @@ jobs:
           printf 'app_name=%s\n' "${app_name}" >> "$GITHUB_OUTPUT"
           printf 'app_display_name=%s\n' "${app_display_name:-$app_name}" >> "$GITHUB_OUTPUT"
 
-      - name: Read stable version
+      - name: Read version
         id: ver
         shell: bash
         run: |
           set -euo pipefail
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            version="${{ inputs.version }}"
-          else
+          version="${{ inputs.version }}"
+          if [ -z "${version}" ]; then
             version="$(sed -n 's:.*<AppVersion>\(.*\)</AppVersion>.*:\1:p' Directory.Build.props)"
           fi
           if [[ ! "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
@@ -106,24 +85,26 @@ jobs:
             exit 1
           fi
           printf 'version=%s\ntag=v%s\n' "${version}" "${version}" >> "$GITHUB_OUTPUT"
-          echo "Stable version: ${version}"
+          echo "Version: ${version}"
 
       - name: Export build metadata
         id: meta
         shell: bash
         run: |
           set -euo pipefail
+          channel="${{ github.ref_name }}"
           {
             echo "app_name=${{ steps.names.outputs.app_name }}"
             echo "app_display_name=${{ steps.names.outputs.app_display_name }}"
             echo "version=${{ steps.ver.outputs.version }}"
             echo "tag=${{ steps.ver.outputs.tag }}"
+            echo "channel=${channel}"
           } >> "$GITHUB_OUTPUT"
           {
             echo "### Build Metadata"
             echo ""
             echo "- App: `${{ steps.names.outputs.app_display_name }}`"
-            echo "- Channel: `stable`"
+            echo "- Channel: `${channel}`"
             echo "- Version: `${{ steps.ver.outputs.version }}`"
             echo "- Tag: `${{ steps.ver.outputs.tag }}`"
           } >> "$GITHUB_STEP_SUMMARY"
@@ -237,13 +218,13 @@ jobs:
       - name: Upload portable artifact
         uses: actions/upload-artifact@v7
         with:
-          name: stelliberty-portable-${{ matrix.platform }}
+          name: stelliberty-portable-${{ needs.prepare.outputs.channel }}-${{ matrix.platform }}
           path: build/*.zip
           if-no-files-found: error
 
       - name: Upload installer artifact
         uses: actions/upload-artifact@v7
         with:
-          name: stelliberty-installer-${{ matrix.platform }}
+          name: stelliberty-installer-${{ needs.prepare.outputs.channel }}-${{ matrix.platform }}
           path: build/packages/*.zip
           if-no-files-found: error
