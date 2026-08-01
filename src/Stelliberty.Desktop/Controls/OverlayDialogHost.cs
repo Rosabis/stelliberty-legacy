@@ -22,8 +22,9 @@ public sealed class OverlayDialogHost : Control
         AvaloniaProperty.Register<OverlayDialogHost, bool>(nameof(IsOpen));
 
     // 禁用虚拟化对话框的卡片缩放，避免变换干扰视口。
+    // 默认值直接按平台决定，避免构造函数里先改属性再初始化 _presenter 触发 NRE。
     public static readonly StyledProperty<bool> AnimateScaleProperty =
-        AvaloniaProperty.Register<OverlayDialogHost, bool>(nameof(AnimateScale), true);
+        AvaloniaProperty.Register<OverlayDialogHost, bool>(nameof(AnimateScale), !PageTransition.PreferInstant);
 
     private readonly Border _scrim;
     private readonly ContentPresenter _presenter;
@@ -39,14 +40,9 @@ public sealed class OverlayDialogHost : Control
     private static readonly ITransform OpenTransform = DialogAnimation.OpenTransform;
     private static readonly ITransform ExitTransform = DialogAnimation.ExitTransform;
 
+    // 初始化遮罩与内容呈现器；AnimateScale 默认值已按平台设定，勿在字段初始化前赋值。
     public OverlayDialogHost()
     {
-        // Windows 低端合成后端跳过缩放弹入，减少无用变换开销。
-        if (PageTransition.PreferInstant)
-        {
-            AnimateScale = false;
-        }
-
         _presenter = new ContentPresenter
         {
             HorizontalAlignment = HorizontalAlignment.Center,
