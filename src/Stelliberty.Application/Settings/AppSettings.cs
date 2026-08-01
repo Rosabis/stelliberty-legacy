@@ -37,7 +37,8 @@ public sealed class AppSettings
 
     public bool IsLazyModeEnabled { get; set; }
 
-    public bool IsTitleBarFpsVisible { get; set; } = true;
+    // 默认关闭：合成采样在老式 Windows 合成后端上会持续占 CPU，设置里仍可手动打开。
+    public bool IsTitleBarFpsVisible { get; set; }
 
     public bool IsAutoStartEnabled { get; set; }
 
@@ -191,7 +192,8 @@ public sealed class AppSettings
 
     public IReadOnlyList<string> FallbackFilterDomains { get; set; } = DnsDefaults.FallbackFilterDomains;
 
-    public string GeoDataLoader { get; set; } = "standard";
+    // 默认省内存加载器，面向 Win10 LTSB / 低内存机器；需要吞吐时可在设置里改回 standard。
+    public string GeoDataLoader { get; set; } = "memconservative";
 
     public string FindProcessMode { get; set; } = "off";
 

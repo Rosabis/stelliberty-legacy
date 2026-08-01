@@ -106,11 +106,9 @@ internal sealed class WindowAppearanceService : IDisposable
             return;
         }
 
+        // Windows 能力层已关闭 Mica/Acrylic（Win10 LTSB 不支持且吃显存）；仅 macOS Blur 会走到半透明分支。
         _window.TransparencyLevelHint = effect switch
         {
-            WindowEffect.Mica => [WindowTransparencyLevel.Mica],
-            WindowEffect.Acrylic => [WindowTransparencyLevel.AcrylicBlur],
-            // macOS 后端只把 AcrylicBlur 接到 NSVisualEffectView 模糊。
             WindowEffect.Blur => [WindowTransparencyLevel.AcrylicBlur],
             _ => [WindowTransparencyLevel.None]
         };
@@ -143,23 +141,20 @@ internal sealed class WindowAppearanceService : IDisposable
 
         var effect = _theme.SelectedWindowEffect;
         var surfaceBrush = new SolidColorBrush(isLightTheme ? ThemeSurfaceColors.Light : ThemeSurfaceColors.Dark);
-        var rootSurfaceBrush = effect switch
-        {
-            WindowEffect.None => surfaceBrush,
-            WindowEffect.Acrylic or WindowEffect.Blur => new SolidColorBrush(Color.Parse(isLightTheme ? "#B3FFFFFF" : "#B3212121")),
-            _ => (IBrush)Brushes.Transparent
-        };
+        // Blur（macOS）用半透明根表面；其余一律实色，避免 Windows 透明合成开销。
+        IBrush rootSurfaceBrush = effect == WindowEffect.Blur
+            ? new SolidColorBrush(Color.Parse(isLightTheme ? "#B3FFFFFF" : "#B3212121"))
+            : surfaceBrush;
         // 这里只处理窗口效果背景；其余样式归 Theme.axaml。
         _window.Resources["AppRootSurfaceBrush"] = rootSurfaceBrush;
         _window.Resources["AppDialogSurfaceBrush"] = surfaceBrush;
         _window.Resources["AppPopupSurfaceBrush"] = surfaceBrush;
         _window.Resources["ComboBoxPopupBackground"] = surfaceBrush;
-        _window.Resources["AppSidebarShadow"] = BoxShadows.Parse(effect == WindowEffect.None
+        var isLightSurface = effect == WindowEffect.None
             ? _window.ActualThemeVariant == Avalonia.Styling.ThemeVariant.Light
-                ? "12 0 28 -18 #24000000, 2 0 8 -4 #22000000"
-                : "12 0 28 -18 #32FFFFFF, 2 0 8 -4 #26FFFFFF"
-            : isLightTheme
-                ? "14 0 34 -16 #3A000000, 3 0 10 -4 #24000000"
-                : "14 0 34 -16 #38FFFFFF, 3 0 10 -4 #28FFFFFF");
+            : isLightTheme;
+        _window.Resources["AppSidebarShadow"] = BoxShadows.Parse(isLightSurface
+            ? "4 0 10 -4 #1A000000"
+            : "4 0 10 -4 #28FFFFFF");
     }
 }

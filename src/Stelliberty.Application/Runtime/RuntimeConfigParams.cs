@@ -86,7 +86,7 @@ public sealed record RuntimeConfigParams
 
     public int TunMtu { get; init; } = AppSettings.DefaultTunMtu;
 
-    public string GeodataLoader { get; init; } = "standard";
+    public string GeodataLoader { get; init; } = "memconservative";
 
     public string FindProcessMode { get; init; } = "off";
 

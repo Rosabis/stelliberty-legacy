@@ -159,6 +159,21 @@ public sealed partial class SettingsView : UserControl
         // 切页会按旧鼠标坐标重算命中，首帧禁止继承 hover。
         _pointeroverSuppressor.Begin();
 
+        if (PageTransition.PreferInstant)
+        {
+            RestoreSubPageVisualState();
+            Dispatcher.UIThread.Post(
+                () =>
+                {
+                    if (version == _subPageAnimationVersion && TopLevel.GetTopLevel(this) is not null)
+                    {
+                        _pointeroverSuppressor.Apply();
+                    }
+                },
+                DispatcherPriority.Background);
+            return;
+        }
+
         // 起始态须先无动画落位，再注入过渡才能触发淡入上浮。
         SettingsHeaderText.Transitions = null;
         SettingsHeaderText.Opacity = 0;

@@ -361,6 +361,13 @@ public sealed partial class MainWindow : Window
         nextHost.Transitions = null;
         nextHost.ZIndex = 1;
         nextHost.IsHitTestVisible = false;
+        if (PageTransition.PreferInstant)
+        {
+            nextHost.Opacity = 1;
+            nextHost.RenderTransform = PageTransition.RestTransform;
+            return;
+        }
+
         nextHost.Opacity = 0;
         nextHost.RenderTransform = PageTransition.EnterFromTransform;
     }
@@ -435,21 +442,22 @@ public sealed partial class MainWindow : Window
         SetPageLoadingVisible(false);
         _pendingPageHost = null;
         _visiblePageHost = nextHost;
-        if (previousHost is not null
-            && !ReferenceEquals(previousHost, nextHost)
-            && previousHost.IsVisible)
+        if (previousHost is not null && !ReferenceEquals(previousHost, nextHost))
         {
             DeactivatePageHost(previousHost);
-            previousHost.Transitions = PageTransition.CreateLeaveTransitions();
-            previousHost.ZIndex = 0;
-            previousHost.IsHitTestVisible = false;
-            previousHost.Opacity = 0;
-            previousHost.RenderTransform = PageTransition.LeaveToTransform;
-            ScheduleHidePageHost(previousHost);
-        }
-        else if (previousHost is not null && !ReferenceEquals(previousHost, nextHost))
-        {
-            HidePageHost(previousHost);
+            if (PageTransition.PreferInstant || !previousHost.IsVisible)
+            {
+                HidePageHost(previousHost);
+            }
+            else
+            {
+                previousHost.Transitions = PageTransition.CreateLeaveTransitions();
+                previousHost.ZIndex = 0;
+                previousHost.IsHitTestVisible = false;
+                previousHost.Opacity = 0;
+                previousHost.RenderTransform = PageTransition.LeaveToTransform;
+                ScheduleHidePageHost(previousHost);
+            }
         }
 
         nextHost.Transitions = PageTransition.CreateEnterTransitions();

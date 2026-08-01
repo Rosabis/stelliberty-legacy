@@ -7,7 +7,9 @@ using Avalonia.Media.Transformation;
 
 namespace Stelliberty.Desktop.Controls;
 
-// 页面切换错峰；消除工具栏重影闪烁
+/// <summary>
+/// 页面切换过渡辅助。Windows 目标机（含 Win10 LTSB / 60Hz 老硬件）默认瞬时切页，避免缩放位移动画占用合成与 CPU。
+/// </summary>
 internal static class PageTransition
 {
     private static readonly TimeSpan EnterDuration = TimeSpan.FromMilliseconds(280);
@@ -28,6 +30,11 @@ internal static class PageTransition
         Y2 = 1,
     };
 
+    /// <summary>
+    /// 是否使用瞬时切页（无 opacity/transform 动画）。Windows 恒为 true。
+    /// </summary>
+    public static bool PreferInstant { get; } = OperatingSystem.IsWindows();
+
     // 小位移与轻微缩放只作用于合成属性，避免触发布局。
     public static readonly ITransform EnterFromTransform = TransformOperations.Parse("translate(0px,14px) scale(0.985)");
     public static readonly ITransform RestTransform = TransformOperations.Parse("translate(0px,0px) scale(1)");
@@ -35,21 +42,39 @@ internal static class PageTransition
     public static readonly ITransform HeaderEnterFromTransform = TransformOperations.Parse("translate(0px,8px)");
     public static readonly ITransform HeaderRestTransform = TransformOperations.Parse("translate(0px,0px)");
 
-    public static Transitions CreateEnterTransitions() => new()
-    {
-        new DoubleTransition { Property = Visual.OpacityProperty, Duration = EnterDuration, Easing = EnterEasing },
-        new TransformOperationsTransition { Property = Visual.RenderTransformProperty, Duration = EnterDuration, Easing = EnterEasing },
-    };
+    /// <summary>
+    /// 创建入场过渡；瞬时模式下返回 null。
+    /// </summary>
+    /// <returns>过渡集合，或 null 表示瞬时。</returns>
+    public static Transitions? CreateEnterTransitions() => PreferInstant
+        ? null
+        : new Transitions
+        {
+            new DoubleTransition { Property = Visual.OpacityProperty, Duration = EnterDuration, Easing = EnterEasing },
+            new TransformOperationsTransition { Property = Visual.RenderTransformProperty, Duration = EnterDuration, Easing = EnterEasing },
+        };
 
-    public static Transitions CreateHeaderEnterTransitions() => new()
-    {
-        new DoubleTransition { Property = Visual.OpacityProperty, Duration = HeaderEnterDuration, Easing = EnterEasing },
-        new TransformOperationsTransition { Property = Visual.RenderTransformProperty, Duration = HeaderEnterDuration, Easing = EnterEasing },
-    };
+    /// <summary>
+    /// 创建标题入场过渡；瞬时模式下返回 null。
+    /// </summary>
+    /// <returns>过渡集合，或 null 表示瞬时。</returns>
+    public static Transitions? CreateHeaderEnterTransitions() => PreferInstant
+        ? null
+        : new Transitions
+        {
+            new DoubleTransition { Property = Visual.OpacityProperty, Duration = HeaderEnterDuration, Easing = EnterEasing },
+            new TransformOperationsTransition { Property = Visual.RenderTransformProperty, Duration = HeaderEnterDuration, Easing = EnterEasing },
+        };
 
-    public static Transitions CreateLeaveTransitions() => new()
-    {
-        new DoubleTransition { Property = Visual.OpacityProperty, Duration = LeaveDuration, Easing = LeaveEasing },
-        new TransformOperationsTransition { Property = Visual.RenderTransformProperty, Duration = LeaveDuration, Easing = LeaveEasing },
-    };
+    /// <summary>
+    /// 创建离场过渡；瞬时模式下返回 null。
+    /// </summary>
+    /// <returns>过渡集合，或 null 表示瞬时。</returns>
+    public static Transitions? CreateLeaveTransitions() => PreferInstant
+        ? null
+        : new Transitions
+        {
+            new DoubleTransition { Property = Visual.OpacityProperty, Duration = LeaveDuration, Easing = LeaveEasing },
+            new TransformOperationsTransition { Property = Visual.RenderTransformProperty, Duration = LeaveDuration, Easing = LeaveEasing },
+        };
 }

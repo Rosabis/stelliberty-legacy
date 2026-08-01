@@ -41,12 +41,18 @@ public sealed class OverlayDialogHost : Control
 
     public OverlayDialogHost()
     {
+        // Windows 低端合成后端跳过缩放弹入，减少无用变换开销。
+        if (PageTransition.PreferInstant)
+        {
+            AnimateScale = false;
+        }
+
         _presenter = new ContentPresenter
         {
             HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center,
             RenderTransformOrigin = RelativePoint.Center,
-            RenderTransform = ClosedTransform,
+            RenderTransform = PageTransition.PreferInstant ? OpenTransform : ClosedTransform,
             Opacity = 0,
         };
         _presenter[!ContentPresenter.ContentProperty] = this[!DialogContentProperty];
@@ -147,9 +153,10 @@ public sealed class OverlayDialogHost : Control
         {
             _scrim.Transitions = null;
             _presenter.Transitions = null;
-            _scrim.Opacity = 0;
-            _presenter.Opacity = 0;
-            _presenter.RenderTransform = AnimateScale ? ClosedTransform : OpenTransform;
+            var instant = PageTransition.PreferInstant;
+            _scrim.Opacity = instant ? 1 : 0;
+            _presenter.Opacity = instant ? 1 : 0;
+            _presenter.RenderTransform = instant || !AnimateScale ? OpenTransform : ClosedTransform;
 
             _boundsSubscription?.Dispose();
             _boundsSubscription = _layer.GetObservable(BoundsProperty).Subscribe(new AnonymousObserver<Rect>(bounds =>
@@ -161,6 +168,11 @@ public sealed class OverlayDialogHost : Control
                 _presenter.MaxWidth = Math.Max(0, bounds.Width - DialogMargin * 2);
             }));
             _layer.Children.Add(_scrim);
+        }
+
+        if (PageTransition.PreferInstant)
+        {
+            return;
         }
 
         RequestOpenFrame(revision);
@@ -177,6 +189,13 @@ public sealed class OverlayDialogHost : Control
 
         _closing = true;
         var revision = ++_animationRevision;
+        if (PageTransition.PreferInstant)
+        {
+            RemoveScrim();
+            ClearContentAfterClose();
+            return;
+        }
+
         ConfigureTransitions(DialogTiming.ExitDuration, DialogAnimation.ExitEasing);
         _scrim.Opacity = 0;
         _presenter.Opacity = 0;
