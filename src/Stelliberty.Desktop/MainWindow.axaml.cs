@@ -27,7 +27,7 @@ namespace Stelliberty.Desktop;
 public sealed partial class MainWindow : Window
 {
     // 短暂隐藏保留页面，长期驻留托盘后再回收视觉树。
-    private static readonly TimeSpan HiddenPageReleaseDelay = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan HiddenPageReleaseDelay = TimeSpan.FromSeconds(3);
     private static readonly TimeSpan PageLoadingMinVisible = TimeSpan.FromMilliseconds(300);
     private readonly WindowAppearanceService _windowAppearanceService = new();
     private readonly WindowStateService _windowStateService;
@@ -942,6 +942,9 @@ public sealed partial class MainWindow : Window
             return;
         }
 
+        // 立即触发一次释放（异步，不阻塞 UI），确保内存尽快下降
+        Dispatcher.UIThread.Post(() => OnHiddenPageReleaseTimerTick(this, EventArgs.Empty), DispatcherPriority.Background);
+        
         _hiddenPageReleaseTimer.Stop();
         _hiddenPageReleaseTimer.Start();
     }
@@ -1034,6 +1037,8 @@ public sealed partial class MainWindow : Window
     private void HideToTrayOnSecondFrame(TimeSpan _)
     {
         Hide();
+        // 显式触发内存释放，避免依赖属性变更事件导致释放逻辑未执行
+        ScheduleHiddenMemoryRelease();
     }
 
     private void OnCustomAccentRequested(object? sender, EventArgs args)
