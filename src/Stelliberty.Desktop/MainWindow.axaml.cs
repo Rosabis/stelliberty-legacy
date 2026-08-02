@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Runtime;
 using Avalonia;
 using Avalonia.Automation;
 using Avalonia.Controls;
@@ -945,8 +946,29 @@ public sealed partial class MainWindow : Window
         // 立即触发一次释放（异步，不阻塞 UI），确保内存尽快下降
         Dispatcher.UIThread.Post(() => OnHiddenPageReleaseTimerTick(this, EventArgs.Empty), DispatcherPriority.Background);
         
+        // 多次延迟回收，逐步降低内存占用
+        ScheduleDelayedMemoryRelease(1000);   // 1秒后第二次回收
+        ScheduleDelayedMemoryRelease(3000);   // 3秒后第三次回收
+        ScheduleDelayedMemoryRelease(7000);   // 7秒后第四次回收
+        
         _hiddenPageReleaseTimer.Stop();
         _hiddenPageReleaseTimer.Start();
+    }
+
+    private void ScheduleDelayedMemoryRelease(int milliseconds)
+    {
+        DispatcherTimer.RunOnce(() =>
+        {
+            if (IsVisible || _isShutdownRequested)
+            {
+                return;
+            }
+
+#if DEBUG
+            AppLogger.Debug($"[StartupTrace] Delayed memory release after {milliseconds}ms");
+#endif
+            CollectHiddenMemory();
+        }, TimeSpan.FromMilliseconds(milliseconds));
     }
 
     private void OnHiddenPageReleaseTimerTick(object? sender, EventArgs args)
@@ -1003,6 +1025,16 @@ public sealed partial class MainWindow : Window
 #if DEBUG
         var privateBeforeCollection = GetPrivateMemorySize();
 #endif
+        // 第一次：常规回收
+        GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, blocking: true, compacting: true);
+        GC.WaitForPendingFinalizers();
+        
+        // 第二次：压缩大对象堆，进一步回收
+        GCSettings.LargeObjectHeapCompactionMode = GCLargeObjectHeapCompactionMode.CompactOnce;
+        GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, blocking: true, compacting: true);
+        GC.WaitForPendingFinalizers();
+        
+        // 第三次：最终回收
         GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, blocking: true, compacting: true);
 #if DEBUG
         AppLogger.Info($"[StartupTrace] Hidden memory collected private_before_release={FormatMemory(_hiddenMemoryBeforeRelease)} private_before_gc={FormatMemory(privateBeforeCollection)} private_after_gc={FormatMemory(GetPrivateMemorySize())}");
