@@ -1,3 +1,4 @@
+using System.Runtime;
 using System.Text;
 using Stelliberty.Application.Diagnostics;
 using Stelliberty.Desktop.Services;
@@ -10,6 +11,8 @@ internal static class Program
     [STAThread]
     public static int Main(string[] args)
     {
+        // 低延迟 GC 减少 UI 卡顿，适用于低内存/低核心硬件。
+        GCSettings.LatencyMode = GCLatencyMode.LowLatency;
         Console.OutputEncoding = Encoding.UTF8;
         var launch = DesktopLaunchArguments.Parse(args);
         if (launch is null)

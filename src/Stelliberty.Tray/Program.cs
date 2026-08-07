@@ -1,5 +1,5 @@
-using System.Text;
 using System.Net.Sockets;
+using System.Runtime;
 using Avalonia;
 using Stelliberty.Application.Diagnostics;
 using Stelliberty.Infrastructure.Diagnostics;
@@ -17,6 +17,8 @@ internal static class Program
     [STAThread]
     public static async Task<int> Main(string[] args)
     {
+        // 低延迟 GC 减少 UI 卡顿，适用于低内存/低核心硬件。
+        GCSettings.LatencyMode = GCLatencyMode.LowLatency;
         Console.OutputEncoding = Encoding.UTF8;
         AppLogger.Configure(new CapturedAppLogger(TrayApplicationLayout.RunningLogFilePath));
         ActivateUiOnStart = !args.Contains(SilentStartArgument, StringComparer.Ordinal);

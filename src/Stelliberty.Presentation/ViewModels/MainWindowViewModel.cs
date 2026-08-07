@@ -738,14 +738,15 @@ public sealed partial class MainWindowViewModel : ViewModelBase, IDisposable
     public void OnHomeRuntimeTick()
     {
         SyncExternallyManagedTun();
-        HomePage.RefreshServiceMode();
+
         if (CurrentPage == NavigationPage.Home)
         {
+            HomePage.RefreshServiceMode();
             HomePage.RefreshRuntime();
         }
         else if (CurrentPage == NavigationPage.Connections && !ConnectionPage.IsMonitoringPaused)
         {
-            // 连接是动态数据；可见且未暂停页面每秒拉取，避免入口为空。
+            // 连接是动态数据；可见且未暂停页面按间隔拉取，避免入口为空。
             _ = ConnectionPage.RefreshConnectionsAsync();
         }
     }

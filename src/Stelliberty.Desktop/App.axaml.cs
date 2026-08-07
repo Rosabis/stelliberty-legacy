@@ -988,12 +988,24 @@ public sealed partial class App : Avalonia.Application
     {
         _homeRuntimeTimer = new DispatcherTimer
         {
-            // 主页运行状态每秒刷新；后台页面跳过实时轮询。
-            Interval = TimeSpan.FromSeconds(1)
+            // 动态间隔：首页3秒/连接页2秒/其他5秒，降低低硬件CPU/IO压力。
+            Interval = TimeSpan.FromSeconds(3)
         };
         _homeRuntimeTimer.Tick += (_, _) => viewModel.OnHomeRuntimeTick();
         _homeRuntimeTimer.Start();
-        AppLogger.Info("Home runtime refresh started");
+        viewModel.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(MainWindowViewModel.CurrentPage))
+            {
+                _homeRuntimeTimer.Interval = viewModel.CurrentPage switch
+                {
+                    NavigationPage.Home => TimeSpan.FromSeconds(3),
+                    NavigationPage.Connections => TimeSpan.FromSeconds(2),
+                    _ => TimeSpan.FromSeconds(5)
+                };
+            }
+        };
+        AppLogger.Info("Home runtime refresh started (dynamic interval)");
     }
 
     private void StartWebDavBackupTimer(MainWindowViewModel viewModel)
