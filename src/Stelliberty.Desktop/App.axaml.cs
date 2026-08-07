@@ -999,8 +999,8 @@ public sealed partial class App : Avalonia.Application
             {
                 _homeRuntimeTimer.Interval = viewModel.CurrentPage switch
                 {
-                    NavigationPage.Home => TimeSpan.FromSeconds(3),
-                    NavigationPage.Connections => TimeSpan.FromSeconds(2),
+                    Stelliberty.Presentation.ViewModels.NavigationPage.Home => TimeSpan.FromSeconds(3),
+                    Stelliberty.Presentation.ViewModels.NavigationPage.Connections => TimeSpan.FromSeconds(2),
                     _ => TimeSpan.FromSeconds(5)
                 };
             }
