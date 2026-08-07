@@ -1,5 +1,6 @@
 using System.Net.Sockets;
 using System.Runtime;
+using System.Text;
 using Avalonia;
 using Stelliberty.Application.Diagnostics;
 using Stelliberty.Infrastructure.Diagnostics;
