@@ -26,7 +26,6 @@ public sealed partial class MainWindowViewModel : ViewModelBase, IDisposable
     private readonly ISelectedSubscriptionRuntimeStore? _runtimeStore;
     private readonly SynchronizationContext? _synchronizationContext;
     private readonly AppSettings _settings;
-    private readonly bool _tunAvailabilityManagedExternally;
     private int _runtimeRefreshVersion;
     private string? _pendingRuntimeSubscriptionId;
     private string? _startupOverrideRetrySubscriptionId;
@@ -53,16 +52,19 @@ public sealed partial class MainWindowViewModel : ViewModelBase, IDisposable
     private const long NavThrottleMs = 150;
     private const int CoreLogFlushBatchSize = 4;
     private const int ToastMessageMaxLength = 72;
+    private static readonly SubscriptionChainProxyCycleDetector ChainProxyCycleDetector = new();
     private static readonly TimeSpan ToastDisplayDuration = TimeSpan.FromMilliseconds(1500);
     // 与 ToastNotification.CloseDuration 联动，退场完成后再进下一条
     private static readonly TimeSpan ToastCloseDuration = TimeSpan.FromMilliseconds(500);
     private static readonly TimeSpan CoreLogFlushDelay = TimeSpan.FromMilliseconds(700);
     private static readonly TimeSpan ProxySelectionSyncInterval = TimeSpan.FromSeconds(2);
+    // 核心离线时每 2 秒重试只会打满日志与 IO，退到低频探活。
+    private static readonly TimeSpan ProxySelectionSyncDegradedInterval = TimeSpan.FromSeconds(15);
 
     public MainWindowViewModel(
         IAppSettingsStore settingsStore,
         ILocalizationService localization,
-        ISystemProxyController systemProxyService,
+        ISystemProxyService systemProxyService,
         IAppBehaviorService appBehaviorService,
         IGlobalHotkeyService globalHotkeyService,
         SubscriptionPageViewModel subscriptionPage,
@@ -98,16 +100,13 @@ public sealed partial class MainWindowViewModel : ViewModelBase, IDisposable
         Action? serviceModeCoreTransitionStarting = null,
         Func<CancellationToken, Task>? serviceModeCoreTransitionCompleted = null,
         IAppLogReader? appLogReader = null,
-        IAppLogExporter? appLogExporter = null,
-        bool serviceModeCoreHostManagedExternally = false,
-        bool tunAvailabilityManagedExternally = false)
+        IAppLogExporter? appLogExporter = null)
     {
         _settingsStore = settingsStore;
         _localization = localization;
         _synchronizationContext = SynchronizationContext.Current;
         _now = now ?? (() => DateTimeOffset.Now);
         _settings = initialSettings ?? settingsStore.Load();
-        _tunAvailabilityManagedExternally = tunAvailabilityManagedExternally;
         DataManagement = new SettingsDataManagementViewModel(
             dataManagementService,
             localization,
@@ -126,9 +125,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase, IDisposable
         CoreManager = coreManager;
         var runMode = processPrivilegeProbe?.Detect() ?? ProcessRunMode.Normal;
         var hasInitialServiceTunHost = initialServiceModeStatus?.IsRunning == true;
-        // Tray 模式由后台宿主判定 TUN 可用性，UI 进程不能按自身权限撤销偏好。
-        var wasTunRevokedForPermission = !tunAvailabilityManagedExternally
-            && AppSettingsNormalizer.RevokeTunIfUnavailable(_settings, runMode, hasInitialServiceTunHost);
+        var wasTunRevokedForPermission = AppSettingsNormalizer.RevokeTunIfUnavailable(_settings, runMode, hasInitialServiceTunHost);
         if (wasTunRevokedForPermission)
         {
             settingsStore.Save(_settings);
@@ -172,8 +169,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase, IDisposable
             serviceModeSessionActivator,
             serviceModeSessionDeactivator,
             serviceModeCoreTransitionStarting,
-            serviceModeCoreTransitionCompleted,
-            serviceModeCoreHostManagedExternally);
+            serviceModeCoreTransitionCompleted);
         SystemIntegration = new SettingsSystemIntegrationViewModel(
             _settings,
             settingsStore,
@@ -195,10 +191,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase, IDisposable
             HomePage.IsSystemProxyEnabled = true;
         }
 
-        var isTunEnabled = tunAvailabilityManagedExternally
-            ? _settings.IsTunEnabled
-            : AppSettingsNormalizer.EffectiveTunEnabled(_settings, runMode, hasInitialServiceTunHost);
-        HomePage.ApplyTunState(isTunEnabled);
+        HomePage.ApplyTunState(AppSettingsNormalizer.EffectiveTunEnabled(_settings, runMode, hasInitialServiceTunHost));
         // 模式偏好是应用级状态；先注入主页和代理基线，再加载订阅。
         HomePage.ApplyOutboundMode(OutboundModeParser.TryParse(_settings.OutboundMode) ?? Domain.Proxies.OutboundMode.Rule);
         HomePage.RefreshNetworkConnection();
@@ -213,6 +206,8 @@ public sealed partial class MainWindowViewModel : ViewModelBase, IDisposable
         CoreLogPage = coreLogPage ?? new CoreLogPageViewModel(localization: localization);
         CoreLogPage.LogsCleared += OnCoreLogsCleared;
         RulePage = rulePage ?? new RulePageViewModel(localization: localization);
+        RulePage.RuntimeRefreshRequested += OnRuleRuntimeRefreshRequested;
+        RulePage.ToastRequested += OnToastRequested;
         SubscriptionPage = subscriptionPage;
         ProxyPage.PropertyChanged += OnProxyPagePropertyChanged;
         SyncHomeSubscriptionRuntimeStats();
@@ -288,6 +283,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase, IDisposable
         OverridePage.OverridesEdited -= OnOverridesEdited;
         OverridePage.OverrideDeleted -= OnOverrideDeleted;
         OverridePage.ToastRequested -= OnToastRequested;
+        RulePage.ToastRequested -= OnToastRequested;
         if (CoreManager is not null)
         {
             CoreManager.StateChanged -= OnCoreStateChanged;
@@ -311,6 +307,14 @@ public sealed partial class MainWindowViewModel : ViewModelBase, IDisposable
         SubscriptionPage.Dispose();
         OverridePage.Dispose();
         ClearPendingCoreLogs();
+    }
+
+    private void OnRuleRuntimeRefreshRequested(object? sender, EventArgs args)
+    {
+        RefreshSelectedSubscriptionRuntime(
+            SubscriptionPage.CurrentSubscriptionId,
+            "Runtime config refreshed after rule update",
+            "Runtime config refresh failed after rule update");
     }
 
     public string Title => AppMetadata.DisplayName;
@@ -688,7 +692,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase, IDisposable
                 SubscriptionAutoDelay.Reset();
                 ProxyPage.CancelDelayTests();
                 await ApplyEmptyRuntimeToCoreAsync();
-                AppLogger.Info("Runtime config refreshed after data overwrite restore：empty");
+                AppLogger.Info("Runtime config refreshed after data overwrite restore: empty");
                 return;
             }
 
@@ -737,8 +741,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase, IDisposable
     // 宿主心跳只提供节奏；当前页面状态决定是否刷新。
     public void OnHomeRuntimeTick()
     {
-        SyncExternallyManagedTun();
-
+        HomePage.RefreshServiceMode();
         if (CurrentPage == NavigationPage.Home)
         {
             HomePage.RefreshServiceMode();
@@ -749,24 +752,6 @@ public sealed partial class MainWindowViewModel : ViewModelBase, IDisposable
             // 连接是动态数据；可见且未暂停页面按间隔拉取，避免入口为空。
             _ = ConnectionPage.RefreshConnectionsAsync();
         }
-    }
-
-    private void SyncExternallyManagedTun()
-    {
-        if (!_tunAvailabilityManagedExternally)
-        {
-            return;
-        }
-
-        var isTunEnabled = _settingsStore.Load().IsTunEnabled;
-        if (_settings.IsTunEnabled == isTunEnabled && HomePage.IsTunEnabled == isTunEnabled)
-        {
-            return;
-        }
-
-        _settings.IsTunEnabled = isTunEnabled;
-        CoreConfig.RefreshFromSettings();
-        HomePage.ApplyTunState(isTunEnabled);
     }
 
     private void RefreshSelectedSubscriptionRuntime(string? subscriptionId, string successMessage, string failureMessage)
@@ -785,7 +770,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase, IDisposable
         if (string.IsNullOrWhiteSpace(subscriptionId))
         {
             await ApplyEmptyRuntimeToCoreAsync(refreshVersion, endpointChangeVersion);
-            AppLogger.Info($"{successMessage}：empty");
+            AppLogger.Info($"{successMessage}: empty");
             return;
         }
 
@@ -795,6 +780,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase, IDisposable
         try
         {
             var shouldClearFailureNow = true;
+            var wasAppliedToCore = false;
             var result = GenerateSelectedSubscriptionRuntimeWithOverrideFallback(subscriptionId, runtimeFallbackGenerator);
             if (CoreManager is not null && !string.IsNullOrWhiteSpace(result.RuntimeConfigPath))
             {
@@ -811,6 +797,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase, IDisposable
 
                 LastRuntimeApplyMode = applyResult.Mode.ToString();
                 LastRuntimeApplyPid = applyResult.Pid;
+                wasAppliedToCore = true;
                 if (applyResult.Mode == CoreApplyMode.Reload)
                 {
                     _pendingRuntimeSubscriptionId = null;
@@ -827,25 +814,38 @@ public sealed partial class MainWindowViewModel : ViewModelBase, IDisposable
 
             await ProxyPage.RefreshProxiesAsync();
             ProxyPage.BindLoadedConfigToSubscription(subscriptionId);
+            if (wasAppliedToCore
+                && ProxyPage.LastRuntimeSnapshot is { } snapshot
+                && ChainProxyCycleDetector.HasCycle(snapshot))
+            {
+                ShowToast(Localize("RuntimeConfig.Toast.ChainProxyCycleWarning"), ToastType.Warning);
+            }
+
             RulePage.RefreshRulesCommand.Execute(null);
             if (shouldClearFailureNow)
             {
                 SubscriptionPage.ClearSubscriptionRuntimeFailure(subscriptionId);
             }
 
-            AppLogger.Info($"{successMessage}：{subscriptionId}");
+            AppLogger.Info($"{successMessage}: {subscriptionId}");
         }
         catch (Exception exception)
         {
             LastRuntimeApplyMode = "error";
             LastRuntimeApplyError = exception.Message;
-            AppLogger.Error(exception, $"{failureMessage}：{subscriptionId}");
-            // 生成器负责覆写禁用和重试；此路径只回退到空配置。
+            AppLogger.Error(exception, $"{failureMessage}: {subscriptionId}");
+            var isCycleError = IsCoreCycleError(exception);
+            if (isCycleError)
+            {
+                ShowToast(Localize("RuntimeConfig.Toast.ChainProxyCycleWarning"), ToastType.Warning);
+            }
+
+            // 生成器只处理覆写失败回退；此路径收敛到空配置。
             try
             {
                 _pendingRuntimeSubscriptionId = null;
                 SubscriptionPage.RefreshOverrideSelectionFromStore(subscriptionId);
-                await RevertToEmptyRuntimeAsync(subscriptionId, refreshVersion, exception.Message);
+                await RevertToEmptyRuntimeAsync(subscriptionId, refreshVersion, exception.Message, suppressFailureToast: isCycleError);
             }
             catch (Exception revertException)
             {
@@ -864,9 +864,24 @@ public sealed partial class MainWindowViewModel : ViewModelBase, IDisposable
         if (result.OverridesDisabled)
         {
             SubscriptionPage.RefreshOverrideSelectionFromStore(subscriptionId);
+            ShowToast(Localize("RuntimeConfig.Toast.OverridesDisabled"), ToastType.Warning);
         }
 
         return result.Runtime;
+    }
+
+    private static bool IsCoreCycleError(Exception exception)
+    {
+        for (Exception? current = exception; current is not null; current = current.InnerException)
+        {
+            if (current.Message.Contains("loop is detected in ProxyGroup", StringComparison.OrdinalIgnoreCase)
+                || current.Message.Contains("circular dialer-proxy dependency", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private RuntimeConfigParams CurrentRuntimeConfigParams()
@@ -875,7 +890,11 @@ public sealed partial class MainWindowViewModel : ViewModelBase, IDisposable
         return parameters with { IsTunEnabled = parameters.IsTunEnabled && HomePage.IsTunEnabled && HomePage.CanToggleTun };
     }
 
-    private async Task RevertToEmptyRuntimeAsync(string subscriptionId, int refreshVersion, string? failureMessage = null)
+    private async Task RevertToEmptyRuntimeAsync(
+        string subscriptionId,
+        int refreshVersion,
+        string? failureMessage = null,
+        bool suppressFailureToast = false)
     {
         // 较早的刷新不能覆盖用户后来选择的订阅。
         if (refreshVersion != Volatile.Read(ref _runtimeRefreshVersion) || !string.Equals(CurrentRuntimeSubscriptionId(), subscriptionId, StringComparison.Ordinal))
@@ -888,7 +907,10 @@ public sealed partial class MainWindowViewModel : ViewModelBase, IDisposable
         SubscriptionAutoDelay.Reset();
         ProxyPage.CancelDelayTests();
         await ApplyEmptyRuntimeToCoreAsync();
-        ShowErrorToast(Localize("RuntimeConfig.Toast.LoadFailedReverted"));
+        if (!suppressFailureToast)
+        {
+            ShowErrorToast(Localize("RuntimeConfig.Toast.LoadFailedReverted"));
+        }
     }
 
     // 删除最后一个订阅后，带本地失败处理收敛到空配置。

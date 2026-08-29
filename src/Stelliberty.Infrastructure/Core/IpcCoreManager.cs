@@ -7,7 +7,7 @@ using Stelliberty.Application.Runtime;
 
 namespace Stelliberty.Infrastructure.Core;
 
-public sealed class IpcCoreManager : IReadyCoreManager, IDisposable, IAsyncDisposable
+public sealed class IpcCoreManager : ICoreManager, IDisposable, IAsyncDisposable
 {
     private readonly JsonRpcPipeClient _client;
     private readonly CoreLogParser _coreLogParser = new();
@@ -255,7 +255,7 @@ public sealed class IpcCoreManager : IReadyCoreManager, IDisposable, IAsyncDispo
             return;
         }
 
-        foreach (var message in _coreLogParser.Parse(line))
+        foreach (var message in _coreLogParser.Parse(line, DateTimeOffset.Now))
         {
             CoreLogReceived?.Invoke(this, message);
         }

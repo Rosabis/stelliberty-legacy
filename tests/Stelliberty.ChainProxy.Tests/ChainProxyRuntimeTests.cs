@@ -1,5 +1,4 @@
 using Stelliberty.Application.Subscriptions;
-using Stelliberty.Application.Runtime;
 using Stelliberty.Domain.Subscriptions;
 using YamlDotNet.RepresentationModel;
 using Xunit;
@@ -31,36 +30,6 @@ public sealed class ChainProxyRuntimeTests
             """);
 
         Assert.Equal(["JP"], names);
-    }
-
-    [Fact(DisplayName = "Context loader excludes builtin chain nodes from custom candidates")]
-    public void ContextLoaderExcludesBuiltinChainNodesFromCustomCandidates()
-    {
-        var store = new FakeSubscriptionStore(Subscription("sub-1"),
-            """
-            proxies:
-              - name: HK
-                type: ss
-                server: hk.example
-              - name: JP
-                type: ss
-                server: jp.example
-              - name: JP via HK
-                type: ss
-                server: jp.example
-                dialer-proxy: HK
-              - name: EmptyChain
-                type: ss
-                dialer-proxy: ''
-            proxy-groups: []
-            """);
-        var loader = new SubscriptionChainProxyContextLoader(store, new PassthroughOverrideEngine());
-
-        var context = loader.Load("sub-1");
-
-        Assert.Equal(["JP via HK"], context.BuiltinChainProxyNames);
-        Assert.Equal(["HK", "JP", "EmptyChain"], context.Candidates.Select(candidate => candidate.Name));
-        Assert.DoesNotContain(context.Candidates, candidate => candidate.Name == "JP via HK");
     }
 
     [Fact(DisplayName = "Runtime applier removes disabled builtin chain proxy only")]
@@ -104,7 +73,7 @@ public sealed class ChainProxyRuntimeTests
         {
             CustomChainProxies =
             [
-                new SubscriptionCustomChainProxy("chain-a", "JP via TW via HK", ["HK", "TW", "JP"])
+                Chain("chain-a", "JP via TW via HK", "GLOBAL", "HK", "TW", "JP")
             ]
         });
         var proxies = Proxies(output);
@@ -114,42 +83,6 @@ public sealed class ChainProxyRuntimeTests
         Assert.Equal("HK", Scalar(internalHop, "dialer-proxy"));
         Assert.Equal("__stelliberty_chain_chain-a_1", Scalar(display, "dialer-proxy"));
         Assert.Equal("jp.example", Scalar(display, "server"));
-    }
-
-    [Fact(DisplayName = "Runtime applier adds custom chain display to leaf groups")]
-    public void RuntimeApplierAddsCustomChainDisplayToLeafGroups()
-    {
-        var output = new SubscriptionChainProxyRuntimeApplier().Apply(
-            """
-            proxies:
-              - name: HK
-                type: ss
-                server: hk.example
-              - name: TW
-                type: ss
-                server: tw.example
-              - name: JP
-                type: ss
-                server: jp.example
-            proxy-groups:
-              - name: GLOBAL
-                type: select
-                proxies: [HK, JP]
-              - name: Regional
-                type: select
-                proxies: [HK, TW]
-            rules: []
-            """,
-            Subscription("sub-1") with
-            {
-                CustomChainProxies =
-                [
-                    new SubscriptionCustomChainProxy("chain-a", "JP via HK", ["HK", "JP"])
-                ]
-            });
-
-        Assert.Equal(["HK", "JP", "JP via HK"], ProxyGroupEntries(output, "GLOBAL"));
-        Assert.Equal(["HK", "TW"], ProxyGroupEntries(output, "Regional"));
     }
 
     [Fact(DisplayName = "Runtime applier overrides leaf dialer proxy")]
@@ -175,7 +108,7 @@ public sealed class ChainProxyRuntimeTests
             {
                 CustomChainProxies =
                 [
-                    new SubscriptionCustomChainProxy("chain-a", "JP via HK", ["HK", "JP"])
+                    Chain("chain-a", "JP via HK", "GLOBAL", "HK", "JP")
                 ]
             });
 
@@ -192,8 +125,8 @@ public sealed class ChainProxyRuntimeTests
         {
             CustomChainProxies =
             [
-                new SubscriptionCustomChainProxy("conflict-node", "JP", ["HK", "TW"]),
-                new SubscriptionCustomChainProxy("conflict-group", "GLOBAL", ["HK", "TW"])
+                Chain("conflict-node", "JP", "GLOBAL", "HK", "TW"),
+                Chain("conflict-group", "GLOBAL", "GLOBAL", "HK", "TW")
             ]
         });
 
@@ -207,8 +140,8 @@ public sealed class ChainProxyRuntimeTests
         {
             CustomChainProxies =
             [
-                new SubscriptionCustomChainProxy("missing", "Missing chain", ["HK", "Missing"]),
-                new SubscriptionCustomChainProxy("single", "Single chain", ["HK"])
+                Chain("missing", "Missing chain", "GLOBAL", "HK", "Missing"),
+                Chain("single", "Single chain", "GLOBAL", "HK")
             ]
         });
 
@@ -243,7 +176,7 @@ public sealed class ChainProxyRuntimeTests
             {
                 CustomChainProxies =
                 [
-                    new SubscriptionCustomChainProxy("chain-a", "JP via TW via HK", ["HK", "TW", "JP"])
+                    Chain("chain-a", "JP via TW via HK", "GLOBAL", "HK", "TW", "JP")
                 ]
             });
 
@@ -289,6 +222,22 @@ public sealed class ChainProxyRuntimeTests
         """;
     }
 
+    private static SubscriptionCustomChainProxy Chain(
+        string id,
+        string displayName,
+        string proxyGroupName,
+        params string[] proxyNames)
+    {
+        return new SubscriptionCustomChainProxy(
+            id,
+            displayName,
+            proxyGroupName,
+            proxyNames.Select(ProxyHop).ToList());
+    }
+
+    private static SubscriptionChainProxyHop ProxyHop(string name)
+        => new(SubscriptionChainProxyHopKind.Proxy, name);
+
     private static Subscription Subscription(string id)
     {
         return new Subscription(id, "Sub", "source", false, DateTimeOffset.UnixEpoch);
@@ -317,37 +266,4 @@ public sealed class ChainProxyRuntimeTests
         return mapping.Children.TryGetValue(new YamlScalarNode(key), out var value) ? value.ToString() : string.Empty;
     }
 
-    private sealed class FakeSubscriptionStore(Subscription subscription, string content) : ISubscriptionStore
-    {
-        public void Save(Subscription subscription, string originalContent)
-        {
-        }
-
-        public void UpdateSubscription(Subscription subscription)
-        {
-        }
-
-        public void SaveSubscriptions(IReadOnlyList<Subscription> subscriptions)
-        {
-        }
-
-        public void SaveContent(string subscriptionId, string originalContent)
-        {
-        }
-
-        public IReadOnlyList<Subscription> LoadSubscriptions() => [subscription];
-
-        public string ReadContent(string subscriptionId) => content;
-
-        public string GetContentPath(string subscriptionId) => $"{subscriptionId}.yaml";
-
-        public void Delete(string subscriptionId)
-        {
-        }
-    }
-
-    private sealed class PassthroughOverrideEngine : IConfigOverrideEngine
-    {
-        public string Apply(string baseConfigContent, RuntimeOverride runtimeOverride) => baseConfigContent;
-    }
 }

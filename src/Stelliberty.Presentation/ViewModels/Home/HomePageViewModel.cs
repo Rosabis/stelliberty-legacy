@@ -2,7 +2,6 @@ using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Input;
-using Stelliberty.Application.Tray;
 using Stelliberty.Application.Diagnostics;
 using Stelliberty.Application.Localization;
 using Stelliberty.Application.Platform;
@@ -17,17 +16,18 @@ namespace Stelliberty.Presentation.ViewModels;
 
 public sealed class HomePageViewModel : ViewModelBase, IDisposable
 {
+    // 系统关机不能无限等待正在执行的代理设置。
+    private static readonly TimeSpan ShutdownProxyLockTimeout = TimeSpan.FromSeconds(2);
     private readonly ILocalizationService? _localization;
     private readonly SystemProxyPlatform _systemPlatform;
     private readonly IClipboardWriter? _clipboardWriter;
-    private readonly ISystemProxyController _systemProxyService;
+    private readonly ISystemProxyService _systemProxyService;
     private readonly IServiceModeManager? _serviceModeManager;
     private readonly Func<bool> _isServiceModeCoreHostActive;
     private readonly Func<CancellationToken, Task<ServiceModeOperationResult>>? _serviceModeSessionActivator;
     private readonly Func<CancellationToken, Task<ServiceModeOperationResult>>? _serviceModeSessionDeactivator;
     private readonly Action? _serviceModeCoreTransitionStarting;
     private readonly Func<CancellationToken, Task>? _serviceModeCoreTransitionCompleted;
-    private readonly bool _serviceModeCoreHostManagedExternally;
     private readonly Func<SystemProxyApplicationRequest> _systemProxyRequestFactory;
     private readonly Action<bool>? _tunStateChanged;
 
@@ -42,9 +42,11 @@ public sealed class HomePageViewModel : ViewModelBase, IDisposable
     private readonly Func<DateTimeOffset> _now;
 
     private readonly SynchronizationContext? _uiContext;
+    private readonly SemaphoreSlim _systemProxyApplyLock = new(1, 1);
     private bool _isSystemProxyEnabled;
+
+    private bool _hasEnabledSystemProxy;
     private int _systemProxyApplyVersion;
-    private int _pendingSystemProxyOperations;
     private bool _isTunEnabled;
     private int _tunApplyVersion;
 
@@ -64,17 +66,18 @@ public sealed class HomePageViewModel : ViewModelBase, IDisposable
     private long _downloadTotal;
     private int _activeConnectionCount;
 
-    private double _speedAxisMax;
-
-    private const int SpeedHistoryCapacity = 60;
+    // 30 个采样间隔构成 30 秒可见窗口，故需 31 个点
+    private const int SpeedHistoryCapacity = 31;
     private readonly Queue<double> _uploadSpeedHistory = new();
     private readonly Queue<double> _downloadSpeedHistory = new();
-    private readonly TrafficRateTracker _directRuntimeTrafficTracker = new();
+    private bool _isSpeedChartLive = true;
 
+    private readonly TrafficRateTracker _trafficTracker = new();
     private bool _isCoreRestarting;
     private bool _isCoreUpdating;
     private bool _isServiceModeBusy;
     private bool _isRefreshingServiceMode;
+    private long _runtimeRefreshVersion;
     private bool _isDisposed;
     private ServiceModeStatus _serviceModeStatus = ServiceModeStatus.Unavailable(string.Empty);
     private DateTimeOffset? _lastServiceModeProbe;
@@ -84,7 +87,7 @@ public sealed class HomePageViewModel : ViewModelBase, IDisposable
     private CancellationTokenSource? _refreshCancellation;
 
     public HomePageViewModel(
-        ISystemProxyController systemProxyService,
+        ISystemProxyService systemProxyService,
         Func<SystemProxyApplicationRequest> systemProxyRequestFactory,
         IServiceModeManager? serviceModeManager = null,
         Func<bool>? isServiceModeCoreHostActive = null,
@@ -105,21 +108,18 @@ public sealed class HomePageViewModel : ViewModelBase, IDisposable
         Func<CancellationToken, Task<ServiceModeOperationResult>>? serviceModeSessionActivator = null,
         Func<CancellationToken, Task<ServiceModeOperationResult>>? serviceModeSessionDeactivator = null,
         Action? serviceModeCoreTransitionStarting = null,
-        Func<CancellationToken, Task>? serviceModeCoreTransitionCompleted = null,
-        bool serviceModeCoreHostManagedExternally = false)
+        Func<CancellationToken, Task>? serviceModeCoreTransitionCompleted = null)
     {
         _localization = localization;
         _systemPlatform = systemPlatform;
         _clipboardWriter = clipboardWriter;
         _systemProxyService = systemProxyService;
-        _systemProxyService.StatusChanged += OnSystemProxyStatusChanged;
         _serviceModeManager = serviceModeManager;
         _isServiceModeCoreHostActive = isServiceModeCoreHostActive ?? (() => serviceModeManager is not null);
         _serviceModeSessionActivator = serviceModeSessionActivator;
         _serviceModeSessionDeactivator = serviceModeSessionDeactivator;
         _serviceModeCoreTransitionStarting = serviceModeCoreTransitionStarting;
         _serviceModeCoreTransitionCompleted = serviceModeCoreTransitionCompleted;
-        _serviceModeCoreHostManagedExternally = serviceModeCoreHostManagedExternally;
         _systemProxyRequestFactory = systemProxyRequestFactory;
         _tunStateChanged = tunStateChanged;
         _coreRestart = coreRestart;
@@ -152,7 +152,6 @@ public sealed class HomePageViewModel : ViewModelBase, IDisposable
         ToggleServiceModeCommand = new RelayCommand(() => _ = ToggleServiceModeAsync());
 
         SeedZeroHistory();
-        _ = RefreshSystemProxyStatusAsync();
         RefreshServiceMode(force: true);
     }
 
@@ -207,20 +206,19 @@ public sealed class HomePageViewModel : ViewModelBase, IDisposable
         {
             _uptime = now >= since ? now - since : TimeSpan.Zero;
         }
-        else if (!isRunning)
+        else if (!isRunning && _isCoreRunning)
         {
-            // 核心停止只重置运行统计；系统代理有独立生命周期。
+            // 仅在运行转为停止时清空；初始与重复的停止状态不能打断图表采样。
             _coreRunningSince = null;
             _uptime = TimeSpan.Zero;
 
-            _directRuntimeTrafficTracker.Reset();
+            _trafficTracker.Reset();
             _uploadSpeed = 0;
             _downloadSpeed = 0;
             _uploadTotal = 0;
             _downloadTotal = 0;
             _memoryValueText = null;
             _activeConnectionCount = 0;
-            _speedAxisMax = 0;
             SeedZeroHistory();
         }
 
@@ -250,9 +248,9 @@ public sealed class HomePageViewModel : ViewModelBase, IDisposable
     }
 
     public bool CanToggleTun => _runMode is ProcessRunMode.Administrator or ProcessRunMode.Service
-        || (_serviceModeStatus.IsRunning && IsServiceModeCoreHostActive);
+        || (_serviceModeStatus.IsRunning && _isServiceModeCoreHostActive());
 
-    public string CoreHostMode => IsServiceModeCoreHostActive ? "service" : "process";
+    public string CoreHostMode => _isServiceModeCoreHostActive() ? "service" : "process";
 
     public string PrivilegeModeText => _serviceModeStatus.IsRunning
         ? Localize("Home.RunMode.Service")
@@ -277,8 +275,10 @@ public sealed class HomePageViewModel : ViewModelBase, IDisposable
 
     public bool IsServiceModeUpdateAvailable => _serviceModeStatus.IsInstalled
         && !string.IsNullOrWhiteSpace(_serviceModeStatus.InstalledVersion)
+        && !string.IsNullOrWhiteSpace(_serviceModeStatus.AvailableVersion)
         && AppVersionComparer.IsValid(_serviceModeStatus.InstalledVersion)
-        && AppVersionComparer.IsNewer(AppMetadata.Version, _serviceModeStatus.InstalledVersion);
+        && AppVersionComparer.IsValid(_serviceModeStatus.AvailableVersion)
+        && AppVersionComparer.IsNewer(_serviceModeStatus.AvailableVersion, _serviceModeStatus.InstalledVersion);
 
     public bool CanToggleServiceMode => !_isServiceModeBusy && _serviceModeManager is not null;
 
@@ -353,11 +353,12 @@ public sealed class HomePageViewModel : ViewModelBase, IDisposable
 
     public string ActiveConnectionsValueText => _activeConnectionCount.ToString();
 
-    public double SpeedAxisMax => _speedAxisMax;
-
     public IReadOnlyList<double> UploadSamples { get; private set; } = Array.Empty<double>();
 
     public IReadOnlyList<double> DownloadSamples { get; private set; } = Array.Empty<double>();
+
+    // 曲线离开视野（窗口隐藏、切页）时冻结采样，回来后从离开位置接着走。
+    public void SetSpeedChartLive(bool isLive) => _isSpeedChartLive = isLive;
 
     public bool IsCoreRestarting => _isCoreRestarting;
 
@@ -397,6 +398,12 @@ public sealed class HomePageViewModel : ViewModelBase, IDisposable
 
     public void ApplyNetworkConnection(NetworkConnectionInfo info)
     {
+        // Post 投递后可能已销毁，销毁后不得再写状态。
+        if (_isDisposed)
+        {
+            return;
+        }
+
         _networkType = info.Type;
         _networkName = info.Name;
         RaiseHomeStateChanged();
@@ -441,20 +448,22 @@ public sealed class HomePageViewModel : ViewModelBase, IDisposable
 
         var cancellationToken = _refreshCancellation.Token;
         var snapshotLoader = new CoreRuntimeSnapshotLoader(_proxyClient);
+        // 快照耗时常超过轮询周期，只应用最后发起的一次，避免总量倒退。
+        var refreshVersion = Interlocked.Increment(ref _runtimeRefreshVersion);
         _ = Task.Run(async () =>
         {
             try
             {
                 var snapshot = await snapshotLoader.LoadAsync(includeVersion: _shouldRefreshCoreVersion, cancellationToken);
-                if (snapshot is not null && !cancellationToken.IsCancellationRequested)
+                if (snapshot is not null
+                    && !cancellationToken.IsCancellationRequested
+                    && refreshVersion == Volatile.Read(ref _runtimeRefreshVersion))
                 {
-                    Post(() => ApplyRuntime(
-                        snapshot.Stats,
-                        snapshot.Mode,
-                        snapshot.Version,
-                        snapshot.ConnectionCount,
-                        snapshot.History));
+                    Post(() => ApplyRuntime(snapshot.Stats, snapshot.Mode, snapshot.Version, snapshot.ConnectionCount));
                 }
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
             }
             catch (Exception exception)
             {
@@ -530,36 +539,29 @@ public sealed class HomePageViewModel : ViewModelBase, IDisposable
         return status;
     }
 
-    private void ApplyRuntime(
-        CoreRuntimeStats? stats,
-        OutboundMode? mode,
-        string? version,
-        int? connectionCount,
-        IReadOnlyList<TrayRuntimeSample> history)
+    private void ApplyRuntime(CoreRuntimeStats? stats, OutboundMode? mode, string? version, int? connectionCount)
     {
+        // 取消检查与 Post 投递之间存在窗口，销毁后不得再写状态。
+        if (_isDisposed)
+        {
+            return;
+        }
+
         if (stats is not null)
         {
-            var directSample = _directRuntimeTrafficTracker.Update(
-                stats.UploadTotal,
-                stats.DownloadTotal,
-                _now());
-            _uploadSpeed = stats.HasTrafficRate ? stats.UploadSpeed : directSample.UploadSpeed;
-            _downloadSpeed = stats.HasTrafficRate ? stats.DownloadSpeed : directSample.DownloadSpeed;
-            _uploadTotal = history.Count > 0 ? stats.UploadTotal : directSample.UploadTotal;
-            _downloadTotal = history.Count > 0 ? stats.DownloadTotal : directSample.DownloadTotal;
+            var sample = _trafficTracker.Update(stats.UploadTotal, stats.DownloadTotal, _now());
+            _uploadSpeed = stats.HasTrafficRate ? stats.UploadSpeed : sample.UploadSpeed;
+            _downloadSpeed = stats.HasTrafficRate ? stats.DownloadSpeed : sample.DownloadSpeed;
+            _uploadTotal = sample.UploadTotal;
+            _downloadTotal = sample.DownloadTotal;
             _memoryValueText = ByteSize.Format(stats.Memory);
-            if (history.Count > 0)
-            {
-                ApplySpeedHistory(history);
-            }
-            else
+            if (_isSpeedChartLive)
             {
                 PushSpeedSample(_uploadSpeedHistory, _uploadSpeed);
                 PushSpeedSample(_downloadSpeedHistory, _downloadSpeed);
+                UploadSamples = _uploadSpeedHistory.ToArray();
+                DownloadSamples = _downloadSpeedHistory.ToArray();
             }
-            UploadSamples = _uploadSpeedHistory.ToArray();
-            DownloadSamples = _downloadSpeedHistory.ToArray();
-            _speedAxisMax = ComputeAxisMax(_uploadSpeedHistory, _downloadSpeedHistory);
         }
 
         if (mode is { } coreMode)
@@ -670,33 +672,78 @@ public sealed class HomePageViewModel : ViewModelBase, IDisposable
     {
         var version = Interlocked.Increment(ref _systemProxyApplyVersion);
         _isSystemProxyEnabled = shouldEnable;
+        if (shouldEnable)
+        {
+            _hasEnabledSystemProxy = true;
+        }
         RaiseHomeStateChanged();
         _ = Task.Run(() => ApplySystemProxyAsync(shouldEnable, version));
     }
 
-    private async Task ApplySystemProxyAsync(bool shouldEnable, int version)
+    public void DisableSystemProxyOnShutdown()
     {
-        Interlocked.Increment(ref _pendingSystemProxyOperations);
+        // 只关闭本实例的系统代理，保留外部代理状态。
+        Interlocked.Increment(ref _systemProxyApplyVersion);
+        if (!_systemProxyApplyLock.Wait(ShutdownProxyLockTimeout))
+        {
+            AppLogger.Warning("System proxy shutdown cleanup timed out waiting for the apply lock");
+            return;
+        }
         try
         {
-            var request = shouldEnable ? _systemProxyRequestFactory.Invoke() : null;
-            var result = await _systemProxyService.SetEnabledAsync(
-                shouldEnable,
-                request,
-                _refreshCancellation?.Token ?? CancellationToken.None).ConfigureAwait(false);
-            if (_isDisposed || version != Volatile.Read(ref _systemProxyApplyVersion))
+            if (!_hasEnabledSystemProxy)
+            {
+                return;
+            }
+            ApplySystemProxyCore(shouldEnable: false);
+            _hasEnabledSystemProxy = false;
+        }
+        catch (Exception exception)
+        {
+            AppLogger.Warning($"System proxy shutdown cleanup failed: {exception.Message}");
+        }
+        finally
+        {
+            _systemProxyApplyLock.Release();
+        }
+    }
+
+    private async Task ApplySystemProxyAsync(bool shouldEnable, int version)
+    {
+        try
+        {
+            SystemProxyOperationResult result;
+            await _systemProxyApplyLock.WaitAsync().ConfigureAwait(false);
+            try
+            {
+                if (_isDisposed || version != Volatile.Read(ref _systemProxyApplyVersion))
+                {
+                    return;
+                }
+
+                result = ApplySystemProxyCore(shouldEnable);
+            }
+            finally
+            {
+                _systemProxyApplyLock.Release();
+            }
+
+            if (result.IsSuccess)
+            {
+                if (!_isDisposed && version == Volatile.Read(ref _systemProxyApplyVersion))
+                {
+                    _hasEnabledSystemProxy = shouldEnable;
+                }
+                return;
+            }
+
+            if (_isDisposed)
             {
                 return;
             }
 
-            Post(() => ApplySystemProxyResult(result, version));
-            if (!result.IsSuccess)
-            {
-                AppLogger.Warning($"System proxy apply returned failure: {result.Message}");
-            }
-        }
-        catch (OperationCanceledException) when (_isDisposed)
-        {
+            AppLogger.Warning($"System proxy apply returned failure: {result.Message}");
+            Post(() => ApplySystemProxyFailure(shouldEnable, version));
         }
         catch (Exception exception)
         {
@@ -706,10 +753,13 @@ public sealed class HomePageViewModel : ViewModelBase, IDisposable
                 Post(() => ApplySystemProxyFailure(shouldEnable, version));
             }
         }
-        finally
-        {
-            Interlocked.Decrement(ref _pendingSystemProxyOperations);
-        }
+    }
+
+    private SystemProxyOperationResult ApplySystemProxyCore(bool shouldEnable)
+    {
+        return shouldEnable
+            ? _systemProxyService.Enable(_systemProxyRequestFactory.Invoke())
+            : _systemProxyService.Disable();
     }
 
     private void ApplySystemProxyFailure(bool attemptedState, int version)
@@ -720,69 +770,10 @@ public sealed class HomePageViewModel : ViewModelBase, IDisposable
         }
 
         _isSystemProxyEnabled = !attemptedState;
+        _hasEnabledSystemProxy = !attemptedState;
         RaiseHomeStateChanged();
 
         RaiseToast(Localize("Home.Toast.SystemProxyFailed"), ToastType.Error);
-    }
-
-    private void ApplySystemProxyResult(SystemProxyApplyResult result, int version)
-    {
-        if (_isDisposed || version != Volatile.Read(ref _systemProxyApplyVersion))
-        {
-            return;
-        }
-
-        _isSystemProxyEnabled = result.Status.IsEnabled;
-        RaiseHomeStateChanged();
-        if (!result.IsSuccess)
-        {
-            RaiseToast(Localize("Home.Toast.SystemProxyFailed"), ToastType.Error);
-        }
-    }
-
-    private async Task RefreshSystemProxyStatusAsync()
-    {
-        var version = Volatile.Read(ref _systemProxyApplyVersion);
-        try
-        {
-            var status = await _systemProxyService.GetStatusAsync(
-                _refreshCancellation?.Token ?? CancellationToken.None).ConfigureAwait(false);
-            if (!_isDisposed && version == Volatile.Read(ref _systemProxyApplyVersion))
-            {
-                Post(() =>
-                {
-                    if (version == Volatile.Read(ref _systemProxyApplyVersion))
-                    {
-                        ApplySystemProxyStatus(status);
-                    }
-                });
-            }
-        }
-        catch (Exception exception) when (exception is IOException or OperationCanceledException)
-        {
-            AppLogger.Warning($"System proxy status refresh failed: {exception.Message}");
-        }
-    }
-
-    private void OnSystemProxyStatusChanged(object? sender, SystemProxyStatus status)
-    {
-        if (_isDisposed || Volatile.Read(ref _pendingSystemProxyOperations) != 0)
-        {
-            return;
-        }
-
-        Post(() => ApplySystemProxyStatus(status));
-    }
-
-    private void ApplySystemProxyStatus(SystemProxyStatus status)
-    {
-        if (_isDisposed)
-        {
-            return;
-        }
-
-        _isSystemProxyEnabled = status.IsEnabled;
-        RaiseHomeStateChanged();
     }
 
     private async Task RestartCoreAsync()
@@ -880,7 +871,7 @@ public sealed class HomePageViewModel : ViewModelBase, IDisposable
         _isServiceModeBusy = true;
         RaiseHomeStateChanged();
         var token = cancellationToken.CanBeCanceled ? cancellationToken : _refreshCancellation?.Token ?? CancellationToken.None;
-        var shouldDeactivateSession = !installOrUpdate && IsServiceModeCoreHostActive;
+        var shouldDeactivateSession = !installOrUpdate && _isServiceModeCoreHostActive();
         ServiceModeOperationResult result;
         var sessionActivationFailed = false;
         var sessionDeactivationFailed = false;
@@ -1028,10 +1019,6 @@ public sealed class HomePageViewModel : ViewModelBase, IDisposable
         RaiseHomeStateChanged();
     }
 
-    private bool IsServiceModeCoreHostActive => _serviceModeCoreHostManagedExternally
-        ? _serviceModeStatus.IsRunning
-        : _isServiceModeCoreHostActive();
-
     private Task ApplyServiceModeStatusAsync(ServiceModeStatus status)
     {
         if (_uiContext is null || SynchronizationContext.Current == _uiContext)
@@ -1116,31 +1103,16 @@ public sealed class HomePageViewModel : ViewModelBase, IDisposable
 
     private void ResetTraffic()
     {
-        if (_proxyClient is IRuntimeSnapshotClient runtimeClient)
-        {
-            _ = ResetRuntimeTrafficAsync(runtimeClient);
-        }
-        _directRuntimeTrafficTracker.ResetBaseline();
+
+        // 总流量不能重置，所以用基线重置本地显示。
+        _trafficTracker.ResetBaseline();
         _uploadSpeed = 0;
         _downloadSpeed = 0;
         _uploadTotal = 0;
         _downloadTotal = 0;
-        _speedAxisMax = 0;
         // 重置回到首次进入时使用的零基线。
         SeedZeroHistory();
         RaiseHomeStateChanged();
-    }
-
-    private static async Task ResetRuntimeTrafficAsync(IRuntimeSnapshotClient runtimeClient)
-    {
-        try
-        {
-            await runtimeClient.ResetRuntimeTrafficAsync();
-        }
-        catch (Exception exception)
-        {
-            AppLogger.Warning($"Runtime traffic reset failed: {exception.Message}");
-        }
     }
 
     private void Post(Action action)
@@ -1230,7 +1202,6 @@ public sealed class HomePageViewModel : ViewModelBase, IDisposable
         OnPropertyChanged(nameof(ActiveConnectionsValueText));
         OnPropertyChanged(nameof(UploadSamples));
         OnPropertyChanged(nameof(DownloadSamples));
-        OnPropertyChanged(nameof(SpeedAxisMax));
         OnPropertyChanged(nameof(IsCoreRestarting));
         OnPropertyChanged(nameof(CanRestartCore));
         OnPropertyChanged(nameof(IsCoreUpdating));
@@ -1264,23 +1235,6 @@ public sealed class HomePageViewModel : ViewModelBase, IDisposable
         }
     }
 
-    private void ApplySpeedHistory(IReadOnlyList<TrayRuntimeSample> history)
-    {
-        _uploadSpeedHistory.Clear();
-        _downloadSpeedHistory.Clear();
-        for (var i = history.Count; i < SpeedHistoryCapacity; i++)
-        {
-            _uploadSpeedHistory.Enqueue(0);
-            _downloadSpeedHistory.Enqueue(0);
-        }
-
-        foreach (var sample in history.TakeLast(SpeedHistoryCapacity))
-        {
-            _uploadSpeedHistory.Enqueue(sample.UploadSpeed);
-            _downloadSpeedHistory.Enqueue(sample.DownloadSpeed);
-        }
-    }
-
     private void SeedZeroHistory()
     {
         _uploadSpeedHistory.Clear();
@@ -1295,20 +1249,6 @@ public sealed class HomePageViewModel : ViewModelBase, IDisposable
         DownloadSamples = _downloadSpeedHistory.ToArray();
     }
 
-    private static double ComputeAxisMax(Queue<double> upload, Queue<double> download)
-    {
-        var max = 0d;
-        foreach (var value in upload)
-        {
-            if (value > max) max = value;
-        }
-        foreach (var value in download)
-        {
-            if (value > max) max = value;
-        }
-        return max;
-    }
-
     public void Dispose()
     {
         if (_isDisposed)
@@ -1321,11 +1261,20 @@ public sealed class HomePageViewModel : ViewModelBase, IDisposable
         {
             _localization.LanguageChanged -= OnLanguageChanged;
         }
-        _systemProxyService.StatusChanged -= OnSystemProxyStatusChanged;
 
         var cancellation = _refreshCancellation;
         _refreshCancellation = null;
         cancellation?.Cancel();
+        // 短暂等待后台操作响应取消，避免销毁过程中触发 toast
+        if (_isServiceModeBusy || _isCoreUpdating || _isCoreRestarting)
+        {
+            // 超时未取得信号量时不得 Release，否则持有者释放时抛 SemaphoreFullException
+            if (_systemProxyApplyLock.Wait(200))
+            {
+                _systemProxyApplyLock.Release();
+            }
+            Thread.Sleep(50);
+        }
         cancellation?.Dispose();
     }
 }

@@ -70,6 +70,7 @@ def main() -> None:
     print(f"  Architecture   {arch}")
     print(f"  Configuration  {', '.join(c.capitalize() for c in args.configurations)}")
     print(f"  Proxy          {describe_proxy()}")
+    print()
 
     if args.clean:
         with timed_step("Clean workspace"):
@@ -204,7 +205,6 @@ def build_service_binaries(rid: str, target_dir: Path, configurations: list[str]
             command.append("--release")
         env = os.environ.copy()
         env["STELLIBERTY_APP_NAME"] = metadata.app_name
-        env["STELLIBERTY_APP_VERSION"] = metadata.version
         subprocess.run(command, cwd=ROOT, env=env, check=True)
 
         source = ROOT / "target" / target.rust_target / cargo_profile / target.service_binary

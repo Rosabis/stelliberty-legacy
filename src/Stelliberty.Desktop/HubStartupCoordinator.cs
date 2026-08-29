@@ -5,11 +5,12 @@ using Stelliberty.Application.Settings;
 using Stelliberty.Application.Subscriptions;
 using Stelliberty.Desktop.Services;
 using Stelliberty.Infrastructure.Overrides;
-using Stelliberty.Infrastructure.Tray;
 using Stelliberty.Infrastructure.Platform;
 using Stelliberty.Infrastructure.Runtime;
 using Stelliberty.Infrastructure.Settings;
 using Stelliberty.Infrastructure.Subscriptions;
+using Stelliberty.Infrastructure.Rules;
+using Stelliberty.Application.Rules;
 using Stelliberty.Native.Hub;
 
 namespace Stelliberty.Desktop;
@@ -17,9 +18,15 @@ namespace Stelliberty.Desktop;
 // 只编排普通模式启动；启动配置策略归 Application。
 internal static class HubStartupCoordinator
 {
-    public static string PipeName => TrayCoreEndpoints.Hub;
+    // 端点标识沿用 mihomo，确保升级后仍能连接旧服务托管的核心。
+#if DEBUG
 
-    public static string CorePipe => TrayCoreEndpoints.Core;
+    public static readonly string PipeName = BuildHubEndpoint(AppMetadata.PipePrefix + "_core_dev");
+    public static readonly string CorePipe = BuildCoreEndpoint(AppMetadata.PipePrefix + "_mihomo_dev");
+#else
+    public static readonly string PipeName = BuildHubEndpoint(AppMetadata.PipePrefix + "_core_prod");
+    public static readonly string CorePipe = BuildCoreEndpoint(AppMetadata.PipePrefix + "_mihomo_prod");
+#endif
 
     private static readonly object StartGate = new();
     private static Task<BootstrapResult>? _startTask;
@@ -95,6 +102,12 @@ internal static class HubStartupCoordinator
             var selectionStore = new FileSubscriptionSelectionStore(platformDirectories.AppDataDirectory);
             var subscriptionStore = new FileSubscriptionStore(platformDirectories.AppDataDirectory);
             var overrideStore = new FileOverrideStore(platformDirectories.AppDataDirectory);
+            var ruleOverrideStore = new FileRuleOverrideStore(platformDirectories.AppDataDirectory);
+            var ruleOverrideService = new RuleOverrideService(
+                subscriptionStore,
+                selectionStore,
+                ruleOverrideStore,
+                new RuleParser());
             var runtimeStore = new FileRuntimeConfigStore(platformDirectories.RuntimeDirectory);
             var builder = new StartupBootstrapConfigBuilder(
                 settingsStore,
@@ -107,7 +120,8 @@ internal static class HubStartupCoordinator
                         selectionStore,
                         new RuntimeConfigGenerator(new HubOverrideEngine()),
                         overrideStore,
-                        runtimeStore)),
+                        runtimeStore,
+                        ruleOverrideService: ruleOverrideService)),
                 new SubscriptionFailureRecorder(subscriptionStore));
             return builder.Build(CorePipe, canUseTun);
         }
@@ -128,4 +142,17 @@ internal static class HubStartupCoordinator
         return AppSettingsNormalizer.CanUseTun(new SystemProcessPrivilegeProbe().Detect(), hasServiceTunHost: false);
     }
 
+    private static string BuildCoreEndpoint(string name)
+    {
+        return OperatingSystem.IsWindows()
+            ? $@"\\.\pipe\{name}"
+            : Path.Combine(Path.GetTempPath(), $"{name}.sock");
+    }
+
+    private static string BuildHubEndpoint(string name)
+    {
+        return OperatingSystem.IsWindows()
+            ? name
+            : Path.Combine(Path.GetTempPath(), $"{name}.sock");
+    }
 }

@@ -10,7 +10,7 @@ internal static partial class DebugCommands
     {
         var page = RequireViewModel(window).HomePage;
         var spec = command["service.".Length..].Trim();
-        if (string.Equals(spec, "status", StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(spec, "state", StringComparison.OrdinalIgnoreCase))
         {
             var status = await page.RefreshServiceModeAsync();
             return ServiceState(page, status);
@@ -63,6 +63,7 @@ internal static partial class DebugCommands
             $"text={ServiceStatusText(status)}",
             $"message={status.Message}",
             $"version={status.InstalledVersion ?? "unknown"}",
+            $"available={status.AvailableVersion ?? "unknown"}",
             $"update={page.IsServiceModeUpdateAvailable.ToString().ToLowerInvariant()}",
             $"heartbeat={status.LastHeartbeatAge?.TotalSeconds.ToString("0") ?? "none"}",
             $"core={status.CoreState ?? "unknown"}",

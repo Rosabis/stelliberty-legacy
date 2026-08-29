@@ -1,16 +1,17 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <AssemblyName>$(AppName)-ui</AssemblyName>
+    <AssemblyName>$(AppName)</AssemblyName>
     <Version>$(AppVersion)</Version>
     <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
     <HotAvaloniaAutoEnable>false</HotAvaloniaAutoEnable>
     <ApplicationIcon>Assets\win\app_icon.ico</ApplicationIcon>
   </PropertyGroup>
 
-  <ItemGroup>
-    <InternalsVisibleTo Include="Stelliberty.Shell.Tests" />
-  </ItemGroup>
+  <PropertyGroup Condition="'$(Configuration)' == 'Debug'">
+    <OutputType>Exe</OutputType>
+    <HotAvaloniaMode>Aggressive</HotAvaloniaMode>
+  </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="Avalonia" Version="12.1.1" />
@@ -20,10 +21,10 @@
     <PackageReference Include="Avalonia.AvaloniaEdit" Version="12.0.0" />
     <PackageReference Include="HotAvalonia" Version="3.1.4" PrivateAssets="All" Publish="True" Condition="'$(Configuration)' == 'Debug'" />
     <PackageReference Include="IconPacks.Avalonia.MingCuteIcons" Version="2.0.0-stelliberty.1" />
-    <PackageReference Include="Semi.Avalonia" Version="12.1.0" />
+    <PackageReference Include="Semi.Avalonia" Version="12.1.0.1" />
     <PackageReference Include="Semi.Avalonia.AvaloniaEdit" Version="12.0.0" />
-    <PackageReference Include="Semi.Avalonia.DataGrid" Version="12.1.0" />
-    <PackageReference Include="Semi.Avalonia.ColorPicker" Version="12.1.0" />
+    <PackageReference Include="Semi.Avalonia.DataGrid" Version="12.1.0.1" />
+    <PackageReference Include="Semi.Avalonia.ColorPicker" Version="12.1.0.1" />
   </ItemGroup>
 
   <ItemGroup>
