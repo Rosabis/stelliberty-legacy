@@ -361,12 +361,13 @@ public sealed partial class App : Avalonia.Application
             _ = RunAppUpdateCheckAsync(() => autoUpdateRunner.RunStartupCheckAsync());
             StartAppUpdateAutoCheckTimer(autoUpdateRunner);
             StartSubscriptionAutoDelayTimer(viewModel);
-            StartHomeRuntimeTimer(viewModel);
             StartWebDavBackupTimer(viewModel);
             var mainWindow = new MainWindow(settingsStore, settings)
             {
                 DataContext = viewModel
             };
+            // 窗口实例就绪后再启动首页心跳，tick 内可感知窗口可见性（托盘驻留时降级为仅服务模式心跳）。
+            StartHomeRuntimeTimer(viewModel, mainWindow);
             mainWindow.PrepareShutdownAsync = async () =>
             {
                 StopBackgroundServices();
@@ -782,15 +783,33 @@ public sealed partial class App : Avalonia.Application
         AppLogger.Info("Subscription auto-update scheduler started");
     }
 
-    private void StartHomeRuntimeTimer(MainWindowViewModel viewModel)
+    private void StartHomeRuntimeTimer(MainWindowViewModel viewModel, MainWindow mainWindow)
     {
         _homeRuntimeTimer = new DispatcherTimer
         {
             // 动态间隔：首页3秒/连接页2秒/其他5秒，降低低硬件CPU/IO压力。
             Interval = TimeSpan.FromSeconds(3)
         };
-        _homeRuntimeTimer.Tick += (_, _) => viewModel.OnHomeRuntimeTick();
+        // 托盘驻留（窗口隐藏）时不拉取数据快照与连接列表，只保留服务模式心跳（内部10秒节流）。
+        _homeRuntimeTimer.Tick += (_, _) =>
+        {
+            if (!mainWindow.IsVisible)
+            {
+                viewModel.HomePage.RefreshServiceMode();
+                return;
+            }
+
+            viewModel.OnHomeRuntimeTick();
+        };
         _homeRuntimeTimer.Start();
+        // 从托盘恢复显示时立即补一次刷新，避免首页数据最多陈旧一个轮询周期。
+        mainWindow.PropertyChanged += (_, args) =>
+        {
+            if (args.Property == Visual.IsVisibleProperty && args.NewValue is true)
+            {
+                viewModel.OnHomeRuntimeTick();
+            }
+        };
         viewModel.PropertyChanged += (_, e) =>
         {
             if (e.PropertyName == nameof(MainWindowViewModel.CurrentPage))
@@ -803,7 +822,7 @@ public sealed partial class App : Avalonia.Application
                 };
             }
         };
-        AppLogger.Info("Home runtime refresh started (dynamic interval)");
+        AppLogger.Info("Home runtime refresh started (dynamic interval, paused while window hidden)");
     }
 
     private void StartWebDavBackupTimer(MainWindowViewModel viewModel)

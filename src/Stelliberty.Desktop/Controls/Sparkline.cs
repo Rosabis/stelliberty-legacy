@@ -302,6 +302,14 @@ public sealed class Sparkline : Control
 
     private void OnAnimationTick(object? sender, EventArgs e)
     {
+        // 窗口隐藏（托盘驻留）期间没有合成输出，重绘定时器立即停转；
+        // 恢复可见后下一笔数据会经 SetScrollSeries/SetMorphSeries 重新启动动画。
+        if (GetVisualRoot() is TopLevel { IsVisible: false })
+        {
+            StopAnimation();
+            return;
+        }
+
         var isMorphing = _morphFrom is not null;
         var duration = isMorphing
             ? MorphDuration
